@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Exclude ALL SQLite databases from legacy Auto Backup -->
+    <exclude domain="database" path="*"/>
+
+    <!-- Optional: in case a lib writes db-like files under files/databases -->
+    <exclude domain="file" path="databases/"/>
+</full-backup-content>
