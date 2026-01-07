@@ -14,6 +14,11 @@ class InvoiceAR {
   final String invoiceNo;
   final String customerCode;
   final String customerName;
+
+  // 🆕 Salesman fields
+  final String salesmanName;
+  final String salesmanCode;
+
   final double netAmount;   // total_amount - discount_amount
   final double paidAmount;  // SUM(payments)
   final double balance;     // >= 0
@@ -25,6 +30,8 @@ class InvoiceAR {
     required this.invoiceNo,
     required this.customerCode,
     required this.customerName,
+    required this.salesmanName,
+    required this.salesmanCode,
     required this.netAmount,
     required this.paidAmount,
     required this.balance,
@@ -94,7 +101,7 @@ class ClientAR {
     return 'Current';
   }
 
-  // NEW: quick helpers for posted flags
+  // quick helpers for posted flags
   bool get anyPosted => invoices.any((i) => i.isPosted);
   bool get allPosted => invoices.isNotEmpty && invoices.every((i) => i.isPosted);
 }
@@ -156,23 +163,25 @@ class ARNotifier extends AutoDisposeNotifier<ARState> {
     try {
       final db = await AppDb.get();
 
-      // NOTE: view_account_recievable now contains: is_posted, due_date, due_date_date
+      // NOTE: view_account_receivable now contains: salesman_name, salesman_code, is_posted, due_date, due_date_date
       final rows = await db.rawQuery('''
-  SELECT
-    invoice_id,
-    invoice_number,      -- aliased invoice_no from the view
-    order_id,
-    customer_code,
-    customer_name,
-    net_amount,
-    paid_amount,
-    balance,
-    due_date,
-    due_date_date,
-    is_posted
-  FROM view_account_recievable
-  WHERE is_posted = 0            -- ⬅️ only NOT YET PAID
-''');
+        SELECT
+          invoice_id,
+          invoice_number,      -- aliased invoice_no from the view
+          order_id,
+          customer_code,
+          customer_name,
+          salesman_name,
+          salesman_code,
+          net_amount,
+          paid_amount,
+          balance,
+          due_date,
+          due_date_date,
+          is_posted
+        FROM view_account_receivable
+        WHERE is_posted = 0            -- ⬅️ only NOT YET POSTED
+      ''');
 
       // Map rows -> invoices
       final invoices = <InvoiceAR>[];
@@ -183,6 +192,8 @@ class ARNotifier extends AutoDisposeNotifier<ARState> {
           invoiceNo: (r['invoice_number'] ?? '').toString(),
           customerCode: (r['customer_code'] ?? '').toString(),
           customerName: _pickName(r['customer_name'], r['customer_code']),
+          salesmanName: _pickName(r['salesman_name'], null),
+          salesmanCode: (r['salesman_code'] ?? '').toString(),
           netAmount: _asDouble(r['net_amount']),
           paidAmount: _asDouble(r['paid_amount']),
           balance: bal < 0 ? 0 : bal,
@@ -267,6 +278,7 @@ class ARNotifier extends AutoDisposeNotifier<ARState> {
   String _pickName(dynamic name, dynamic code) {
     final n = (name ?? '').toString().trim();
     if (n.isNotEmpty) return n;
+    if (code == null) return '—';
     final c = (code ?? '').toString().trim();
     return c.isNotEmpty ? c : '—';
   }

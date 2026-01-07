@@ -1,6 +1,7 @@
 // lib/modules/reports/report_view.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:vos_mobile/modules/reports/assets_and_equipments/assets_and_equipments_view.dart';
 import '../../core/theme/app_theme.dart' as core_theme;
 import '../../state/app_state.dart';
 
@@ -10,6 +11,7 @@ import 'accounts_payable/ap_view.dart';
 import 'accounts_receivable/ar_view.dart';
 import 'disbursement/disburment_view.dart';
 import 'sales_report/sr_view.dart';
+import 'assets_and_equipments/assets_and_equipments_view.dart';
 
 class ReportView extends ConsumerWidget {
   const ReportView({super.key});
@@ -33,6 +35,8 @@ class ReportView extends ConsumerWidget {
         return const DisbursementView(); // Disbursement screen
       case 'sales':
         return const SalesReportView(); // Sales Report screen
+      case 'asset':
+        return const AssetsAndEquipmentsView();
       default:
       // Fallback: generic shell for other report types
         final visual = _resolveVisual(selected.id, selected.title);

@@ -5,10 +5,9 @@ import 'package:sqflite/sqflite.dart';
 class AppDb {
   static const _dbName = 'vos_app.db';
 
-  // Keep seeds off; your sync_repository is source of truth.
-  static const bool kEnableLocalSeeds = false;
-
-  static const _dbVersion = 30;
+  // Local DB is just a cache; sync_repository is the source of truth.
+  // ✅ v35: Fix v_sales_report_itemized join (details join must not require order_id match)
+  static const _dbVersion = 35;
 
   static Database? _instance;
 
@@ -381,14 +380,23 @@ class AppDb {
       );
     ''');
 
+    // 🆕 Product classification table (for ABC + forecast multiplier)
+    await db.execute('''
+      CREATE TABLE product_classification (
+        product_id INTEGER PRIMARY KEY,
+        abc_class TEXT,
+        abc_class_forecast TEXT,
+        abc_class_sold TEXT,
+        forecast_multiplier REAL
+      );
+    ''');
+
     // ▶️ Divisions master table (with compat columns ready)
     await _createDivisionsTable(db);
 
-    // Optional local seeds are disabled by default
-    if (kEnableLocalSeeds) {
-      await _seedDivisions(db);
-      await _seedBrandAndCategory(db);
-    }
+    // ▶️ NEW: Assets & Equipment table + view
+    await _createAssetsTables(db);
+    await _createAssetsViews(db);
 
     await _createPpsUniqueIndex(db);
 
@@ -442,19 +450,19 @@ class AppDb {
         );
       ''');
       await db.execute('DROP VIEW IF EXISTS v_delivery_report;');
-      await db.execute('DROP VIEW IF EXISTS view_account_recievable;');
+      await db.execute('DROP VIEW IF EXISTS view_account_receivable;');
       await _createViews(db);
     }
 
     if (oldV < 4) {
       await db.execute('ALTER TABLE sales_invoice ADD COLUMN payment_terms INTEGER;');
-      await db.execute('DROP VIEW IF EXISTS view_account_recievable;');
+      await db.execute('DROP VIEW IF EXISTS view_account_receivable;');
       await _createARView(db);
     }
 
     if (oldV < 5) {
       await db.execute('ALTER TABLE sales_invoice ADD COLUMN is_posted INTEGER DEFAULT 0;');
-      await db.execute('DROP VIEW IF EXISTS view_account_recievable;');
+      await db.execute('DROP VIEW IF EXISTS view_account_receivable;');
       await _createARView(db);
     }
 
@@ -705,9 +713,6 @@ class AppDb {
         );
       ''');
 
-      if (kEnableLocalSeeds) {
-        await _seedBrandAndCategory(db);
-      }
       await _createPpsUniqueIndex(db);
     }
 
@@ -820,9 +825,6 @@ class AppDb {
 
     if (oldV < 28) {
       await _createDivisionsTable(db);
-      if (kEnableLocalSeeds) {
-        await _seedDivisions(db);
-      }
       await db.execute('DROP VIEW IF EXISTS v_sales_report_itemized;');
       await _createSalesReportItemizedView(db);
       await _createCompatViews(db);
@@ -840,6 +842,39 @@ class AppDb {
       await _safeAddColumn(db, 'divisions', 'name', 'TEXT');
       await db.execute('UPDATE divisions SET id = division_id WHERE id IS NULL;');
       await db.execute('UPDATE divisions SET name = division_name WHERE name IS NULL;');
+      await _createCompatViews(db);
+    }
+
+    // 🔁 v31: ensure product_classification exists for consolidated historical SQL / In Cases
+    if (oldV < 31) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS product_classification (
+          product_id INTEGER PRIMARY KEY,
+          abc_class TEXT,
+          abc_class_forecast TEXT,
+          abc_class_sold TEXT,
+          forecast_multiplier REAL
+        );
+      ''');
+    }
+
+    // 🔁 v32: NEW Assets & Equipment schema
+    if (oldV < 32) {
+      await _createAssetsTables(db);
+      await _createAssetsViews(db);
+    }
+
+    // 🔁 v34: refresh AR view to include sales returns info
+    if (oldV < 34) {
+      await db.execute('DROP VIEW IF EXISTS view_account_receivable;');
+      await _createARView(db);
+    }
+
+    // ✅ v35: Fix v_sales_report_itemized join (remove order_id constraint in details join)
+    if (oldV < 35) {
+      await db.execute('DROP VIEW IF EXISTS v_sales_report_itemized;');
+      await _createSalesReportItemizedView(db);
+      await db.execute('DROP VIEW IF EXISTS v_sales_report_itemized_compat;');
       await _createCompatViews(db);
     }
   }
@@ -910,29 +945,73 @@ class AppDb {
 
   static Future<void> _createARView(Database db) async {
     await db.execute('''
-      CREATE VIEW view_account_recievable AS
-      WITH ar AS (
+      CREATE VIEW view_account_receivable AS
+      WITH sr_agg AS (
+        SELECT
+          TRIM(order_id) AS order_id,
+          TRIM(invoice_no) AS invoice_no,
+          SUM(COALESCE(total_amount,0)) AS return_total_amount,
+          SUM(COALESCE(discount_amount,0)) AS return_discount_total
+        FROM sales_return
+        GROUP BY TRIM(order_id), TRIM(invoice_no)
+      ),
+      ar AS (
         SELECT
           si.invoice_id,
           si.invoice_no                           AS invoice_number,
           si.order_id,
           si.customer_code,
           c.customer_name,
+
+          -- 🆕 Salesman info
+          s.salesman_name                         AS salesman_name,
+          s.salesman_code                         AS salesman_code,
+
           COALESCE(si.total_amount, 0)            AS total_amount,
           COALESCE(si.discount_amount, 0)         AS discount_amount,
-          (COALESCE(si.total_amount, 0) - COALESCE(si.discount_amount, 0)) AS net_amount,
+
+          /* 🆕 Sales return aggregates at invoice level */
+          COALESCE(sr.return_total_amount, 0)     AS return_total_amount,
+          COALESCE(sr.return_discount_total, 0)   AS return_discount_total,
+          (COALESCE(sr.return_total_amount,0) - COALESCE(sr.return_discount_total,0))
+                                                 AS return_net_amount,
+
+          /* Original net (for backward compat) */
+          (COALESCE(si.total_amount, 0) - COALESCE(si.discount_amount, 0))
+                                                 AS net_amount,
+
           COALESCE(p.paid_amount, 0)              AS paid_amount,
+
+          /* Original balance (using original net_amount) */
           MAX(
-            (COALESCE(si.total_amount, 0) - COALESCE(si.discount_amount, 0)) - COALESCE(p.paid_amount, 0)
-          , 0)                                     AS balance,
+            (COALESCE(si.total_amount, 0) - COALESCE(si.discount_amount, 0))
+            - COALESCE(p.paid_amount, 0),
+            0
+          )                                      AS balance,
+
+          /* 🆕 Net after returns & balance after returns */
+          (
+            (COALESCE(si.total_amount, 0) - COALESCE(si.discount_amount, 0))
+            - (COALESCE(sr.return_total_amount,0) - COALESCE(sr.return_discount_total,0))
+          )                                      AS net_after_returns,
+
+          MAX(
+            (
+              (COALESCE(si.total_amount, 0) - COALESCE(si.discount_amount, 0))
+              - (COALESCE(sr.return_total_amount,0) - COALESCE(sr.return_discount_total,0))
+            )
+            - COALESCE(p.paid_amount, 0),
+            0
+          )                                      AS balance_after_returns,
+
           COALESCE(
             NULLIF(si.due_date,''),
             CASE
               WHEN si.invoice_date IS NOT NULL AND si.payment_terms IS NOT NULL
               THEN date(substr(si.invoice_date,1,10), printf('+%d days', si.payment_terms))
             END
-          )                                        AS due_date,
-          si.is_posted                             AS is_posted
+          )                                      AS due_date,
+          si.is_posted                           AS is_posted
         FROM sales_invoice AS si
         LEFT JOIN (
           SELECT invoice_id, SUM(COALESCE(paid_amount,0)) AS paid_amount
@@ -942,6 +1021,11 @@ class AppDb {
           ON p.invoice_id = si.invoice_id
         LEFT JOIN customer AS c
           ON c.customer_code = si.customer_code
+        LEFT JOIN sr_agg AS sr
+          ON TRIM(sr.order_id) = TRIM(si.order_id)
+         AND TRIM(sr.invoice_no) = TRIM(si.invoice_no)
+        LEFT JOIN salesman AS s
+          ON s.id = si.salesman_id   -- assumes sales_invoice.salesman_id = salesman.id
       )
       SELECT
         invoice_id,
@@ -949,11 +1033,23 @@ class AppDb {
         order_id,
         customer_code,
         customer_name,
+
+        -- 🆕 salesman fields exposed in the view
+        salesman_name,
+        salesman_code,
+
         total_amount,
         discount_amount,
+        /* original net */
         net_amount,
+        /* 🆕 returns + net-after-returns */
+        return_total_amount,
+        return_discount_total,
+        return_net_amount,
+        net_after_returns,
         paid_amount,
         balance,
+        balance_after_returns,
         due_date,
         date(due_date) AS due_date_date,
         is_posted
@@ -1161,11 +1257,52 @@ class AppDb {
   /* -------------------------------------------------------------------------- */
   /*   v_sales_report_itemized (division name + camelCase & snake_case flags)   */
   /* -------------------------------------------------------------------------- */
-
   static Future<void> _createSalesReportItemizedView(Database db) async {
     await db.execute('DROP VIEW IF EXISTS v_sales_report_itemized;');
     await db.execute('''
   CREATE VIEW v_sales_report_itemized AS
+  WITH RECURSIVE root_map AS (
+    SELECT p.product_id, p.parent_id, p.product_id AS root_id
+    FROM products p
+    WHERE p.parent_id IS NULL
+    UNION ALL
+    SELECT c.product_id, c.parent_id, r.root_id
+    FROM products c
+    JOIN root_map r ON c.parent_id = r.product_id
+  ),
+
+  /* Pick the BOX candidate per family (same principle as consolidatedSQL_FAMILY_AGG_RANGE_PIECES) */
+  box_rank AS (
+    SELECT
+      rm.root_id,
+      p.product_id,
+      COALESCE(p.unit_of_measurement_count, 1) AS umc,
+      u.`order`                                 AS unit_order,
+      ROW_NUMBER() OVER (
+        PARTITION BY rm.root_id
+        ORDER BY
+          (CASE WHEN u.`order` IS NULL THEN 0 ELSE 1 END) DESC,
+          u.`order` DESC,
+          COALESCE(p.unit_of_measurement_count, 1) DESC,
+          p.product_id ASC
+      ) AS rn
+    FROM root_map rm
+    JOIN products p
+      ON p.product_id = rm.product_id
+     AND p.isActive = 1
+    LEFT JOIN units u
+      ON u.unit_id = p.unit_of_measurement
+  ),
+
+  box_pick AS (
+    SELECT
+      br.root_id,
+      br.product_id AS box_product_id,
+      br.umc        AS pieces_per_box
+    FROM box_rank br
+    WHERE br.rn = 1
+  )
+
   SELECT
     si.invoice_id AS invoice_id,
     si.order_id   AS order_id,
@@ -1282,6 +1419,17 @@ class AppDb {
     ) AS product_supplier,
     sid.unit_price AS product_unit_price,
     sid.quantity AS product_quantity,
+
+    /* ✅ IN CASES: only when there is a real BOX (pieces_per_box > 1) */
+    CASE
+      WHEN bp.pieces_per_box IS NOT NULL
+           AND bp.pieces_per_box > 1
+        THEN (sid.quantity * COALESCE(p.unit_of_measurement_count, 1)) * 1.0
+             / bp.pieces_per_box
+      ELSE 0
+      -- if you prefer blank instead of 0, use: ELSE NULL
+    END AS in_cases,
+
     u.unit_name AS product_unit,
     sid.total_amount AS product_total_amount,
     sid.discount_amount AS product_discount_amount,
@@ -1346,10 +1494,15 @@ class AppDb {
   LEFT JOIN sales_invoice_type sit ON sit.id=si.invoice_type
   LEFT JOIN user u1      ON u1.user_id=si.created_by
   LEFT JOIN user u2      ON u2.user_id=si.modified_by
+
+  /* ✅ FIX: DO NOT require sid.order_id = si.order_id.
+     Details reliably link to header via sid.invoice_no = si.invoice_id. */
   JOIN sales_invoice_details sid
-    ON sid.invoice_no=si.invoice_id
-   AND TRIM(sid.order_id)=TRIM(si.order_id)
+    ON sid.invoice_no = si.invoice_id
+
   LEFT JOIN products p   ON p.product_id=sid.product_id
+  LEFT JOIN root_map rm2 ON rm2.product_id = p.product_id
+  LEFT JOIN box_pick bp  ON bp.root_id    = rm2.root_id
   LEFT JOIN categories cat ON cat.category_id=p.product_category
   LEFT JOIN brand br     ON br.brand_id=p.product_brand
   LEFT JOIN units u      ON u.unit_id=sid.unit;
@@ -1435,6 +1588,10 @@ class AppDb {
     // Divisions / salesman mapping
     await db.execute('CREATE INDEX IF NOT EXISTS idx_divisions_name ON divisions(division_name);');
     await db.execute('CREATE INDEX IF NOT EXISTS idx_salesman_division ON salesman(division_id);');
+
+    // 🆕 Assets & Equipment filters (table name now matches sync)
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_assets_department ON assets_and_equipment(department);');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_assets_condition  ON assets_and_equipment(condition);');
   }
 
   static Future<void> _createSalesReportIndices(Database db) async {
@@ -1467,11 +1624,6 @@ class AppDb {
     }
   }
 
-  static Future<void> _seedBrandAndCategory(Database db) async {
-    await db.execute("INSERT OR IGNORE INTO brand(brand_id, brand_name) VALUES(1, 'N/A');");
-    await db.execute("INSERT OR IGNORE INTO categories(category_id, category_name) VALUES(160, 'All');");
-  }
-
   static Future<void> _createPpsUniqueIndex(Database db) async {
     await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS ux_pps_supplier_product ON product_per_supplier(supplier_id, product_id);');
     await db.execute('CREATE INDEX IF NOT EXISTS idx_pps_supplier ON product_per_supplier(supplier_id);');
@@ -1497,24 +1649,189 @@ class AppDb {
     await db.execute('UPDATE divisions SET name = division_name WHERE name IS NULL;');
   }
 
-  // Optional seed (dev/test only; NOT called by default)
-  static Future<void> _seedDivisions(Database db) async {
-    await db.execute(
-        "INSERT OR IGNORE INTO divisions(division_id, division_name, division_description, division_head, division_code, date_added) "
-            "VALUES (1, 'Industrial', NULL, NULL, NULL, '2023-11-14');"
-    );
-    await db.execute(
-        "INSERT OR IGNORE INTO divisions(division_id, division_name, division_description, division_head, division_code, date_added) "
-            "VALUES (2, 'Dry Goods', NULL, NULL, NULL, '2023-11-14');"
-    );
-    await db.execute(
-        "INSERT OR IGNORE INTO divisions(division_id, division_name, division_description, division_head, division_code, date_added) "
-            "VALUES (3, 'Frozen Goods', NULL, NULL, NULL, '2023-11-14');"
-    );
-    await db.execute(
-        "INSERT OR IGNORE INTO divisions(division_id, division_name, division_description, division_head, division_code, date_added) "
-            "VALUES (4, 'Mama Pina''s', NULL, NULL, NULL, '2023-11-14');"
-    );
+  /* -------------------------------------------------------------------------- */
+  /*   NEW: helper for consolidated historical SQL (in cases)                   */
+  /* -------------------------------------------------------------------------- */
+
+  /// Build SQL equivalent of consolidatedHistoricalSQL_FAMILY_AGG_RANGE_PIECES
+  /// from the Java backend. This returns one row per supplier x product family,
+  /// with `forecast_sum` already in *cases* (pcs / pieces_per_box).
+  ///
+  /// Parameters:
+  /// - filterSupplier: when true, adds `WHERE fb.supplier_id = ?`
+  /// - branchIds: optional list of branch IDs for inventory & history filters
+  static String buildConsolidatedHistoricalSqlFamilyAggRangePieces({
+    required bool filterSupplier,
+    List<int>? branchIds,
+  }) {
+    String branchFilterInIvJoin;
+    String histBranchFilter;
+
+    if (branchIds != null && branchIds.isNotEmpty) {
+      final inList = branchIds.join(',');
+      branchFilterInIvJoin = '''
+            LEFT JOIN v_running_inventory inv
+              ON inv.product_id = p2.product_id
+             AND inv.branch_id IN ($inList)
+''';
+      histBranchFilter = '''
+      AND si.branch_id IN ($inList)
+''';
+    } else {
+      branchFilterInIvJoin = '''
+            LEFT JOIN v_running_inventory inv
+              ON inv.product_id = p2.product_id
+''';
+      histBranchFilter = '';
+    }
+
+    final supplierWhere = filterSupplier ? 'WHERE fb.supplier_id = ?\n' : '';
+
+    return '''
+WITH RECURSIVE root_map AS (
+    SELECT p.product_id, p.parent_id, p.product_id AS root_id
+    FROM products p
+    WHERE p.parent_id IS NULL
+    UNION ALL
+    SELECT c.product_id, c.parent_id, r.root_id
+    FROM products c
+    JOIN root_map r ON c.parent_id = r.product_id
+),
+
+/* Pick the BOX candidate per family (same logic as forecast mode) */
+box_rank AS (
+    SELECT
+        rm.root_id,
+        p.product_id,
+        u."order"                                   AS unit_order,
+        COALESCE(p.unit_of_measurement_count, 1)    AS umc,
+        ROW_NUMBER() OVER (
+            PARTITION BY rm.root_id
+            ORDER BY
+                (CASE WHEN u."order" IS NULL THEN 0 ELSE 1 END) DESC,
+                u."order" DESC,
+                COALESCE(p.unit_of_measurement_count, 1) DESC,
+                p.product_id ASC
+        ) AS rn
+    FROM root_map rm
+    JOIN products p           ON p.product_id = rm.product_id AND p.isActive = 1
+    LEFT JOIN units u         ON u.unit_id = p.unit_of_measurement
+),
+box_pick AS (
+    SELECT
+        br.root_id,
+        br.product_id      AS box_product_id,
+        br.umc             AS pieces_per_box
+    FROM box_rank br
+    WHERE br.rn = 1
+),
+
+/* Family base (one row per supplier x root_id) */
+fb AS (
+    SELECT
+        pps.supplier_id                         AS supplier_id,
+        rm.root_id                              AS root_id,
+        bp.box_product_id                       AS box_product_id,
+        COALESCE(bp.pieces_per_box, 1)          AS pieces_per_box,
+
+        MAX(COALESCE(p_box.product_name, p_root.product_name))          AS product_name,
+        MAX(COALESCE(b_box.brand_name,  b_root.brand_name))             AS brand_name,
+        MAX(COALESCE(c_box.category_name, c_root.category_name))        AS category_name,
+        MAX(COALESCE(u_box.unit_name,    u_root.unit_name))             AS unit_name,
+
+        COALESCE(MAX(p_box.cost_per_unit), MAX(p_root.cost_per_unit), 0) AS last_cost,
+
+        COALESCE(
+            MAX(pclr.abc_class_forecast), MAX(pcl.abc_class_forecast),
+            MAX(pclr.abc_class),         MAX(pcl.abc_class),
+            'B'
+        ) AS abc_class
+    FROM product_per_supplier pps
+    JOIN products p_map        ON p_map.product_id = pps.product_id AND p_map.isActive = 1
+    JOIN root_map rm           ON rm.product_id    = p_map.product_id
+    LEFT JOIN products p_root  ON p_root.product_id = rm.root_id
+    LEFT JOIN brand   b_root   ON b_root.brand_id   = p_root.product_brand
+    LEFT JOIN categories c_root ON c_root.category_id = p_root.product_category
+    LEFT JOIN units   u_root   ON u_root.unit_id    = p_root.unit_of_measurement
+    LEFT JOIN product_classification pcl  ON pcl.product_id  = p_map.product_id
+    LEFT JOIN product_classification pclr ON pclr.product_id = p_root.product_id
+
+    LEFT JOIN box_pick bp         ON bp.root_id         = rm.root_id
+    LEFT JOIN products p_box      ON p_box.product_id   = bp.box_product_id
+    LEFT JOIN brand   b_box       ON b_box.brand_id     = p_box.product_brand
+    LEFT JOIN categories c_box    ON c_box.category_id  = p_box.product_category
+    LEFT JOIN units   u_box       ON u_box.unit_id      = p_box.unit_of_measurement
+
+    GROUP BY pps.supplier_id, rm.root_id, bp.box_product_id, bp.pieces_per_box
+),
+
+/* Historical demand in PCS across family (from dispatched invoices) */
+hist AS (
+    SELECT
+        pps.supplier_id        AS supplier_id,
+        rm2.root_id            AS root_id,
+        SUM(
+            sid.quantity * COALESCE(p.unit_of_measurement_count, 1)
+        ) AS demand_pcs
+    FROM sales_invoice_details sid
+    JOIN sales_invoice si
+      ON si.invoice_id = sid.invoice_no
+     AND si.dispatch_date >= ?
+     AND si.dispatch_date <  ?
+$histBranchFilter
+    JOIN products p
+      ON p.product_id = sid.product_id
+     AND p.isActive = 1
+    JOIN root_map rm2
+      ON rm2.product_id = p.product_id
+    JOIN product_per_supplier pps
+      ON pps.product_id = p.product_id
+    GROUP BY
+        pps.supplier_id,
+        rm2.root_id
+),
+
+/* Inventory in PCS across family (branch-specific; as-of now) */
+iv AS (
+    SELECT
+        rm3.root_id                        AS root_id,
+        SUM(COALESCE(inv.running_inventory, 0)) AS stock_pcs
+    FROM products p2
+    JOIN root_map rm3 ON rm3.product_id = p2.product_id
+$branchFilterInIvJoin
+    GROUP BY rm3.root_id
+)
+
+SELECT
+    fb.supplier_id                                           AS supplier_id,
+    fb.root_id                                               AS key_product_id,
+    fb.box_product_id                                        AS parent_id,
+    fb.product_name                                          AS product_name,
+    fb.brand_name                                            AS brand_name,
+    fb.category_name                                         AS category_name,
+    fb.unit_name                                             AS unit_name,
+    fb.last_cost                                             AS last_cost,
+
+    /* ✅ Only convert to CASES when pieces_per_box > 1 (real box exists) */
+    CASE
+        WHEN fb.pieces_per_box IS NOT NULL AND fb.pieces_per_box > 1
+            THEN COALESCE(iv.stock_pcs, 0) * 1.0 / fb.pieces_per_box
+        ELSE 0
+    END AS current_stock,
+
+    CASE
+        WHEN fb.pieces_per_box IS NOT NULL AND fb.pieces_per_box > 1
+            THEN COALESCE(hist.demand_pcs, 0) * 1.0 / fb.pieces_per_box
+        ELSE 0
+    END AS forecast_sum,
+
+    fb.abc_class                                            AS abc_class
+FROM fb
+LEFT JOIN hist ON hist.supplier_id = fb.supplier_id AND hist.root_id = fb.root_id
+LEFT JOIN iv   ON iv.root_id      = fb.root_id
+$supplierWhere
+ORDER BY fb.brand_name, fb.category_name, fb.product_name
+''';
   }
 
   /* -------------------------------------------------------------------------- */
@@ -1606,5 +1923,63 @@ class AppDb {
         ifsc_code TEXT
       );
     ''');
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /*                   NEW: Assets & Equipment schema & views                   */
+  /* -------------------------------------------------------------------------- */
+
+  static Future<void> _createAssetsTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS assets_and_equipment (
+        id INTEGER PRIMARY KEY,
+        item_id INTEGER,
+        item_image TEXT,
+        quantity INTEGER NOT NULL DEFAULT 1,
+        rfid_code TEXT,
+        barcode TEXT,
+        department INTEGER,
+        employee INTEGER,
+        cost_per_item REAL,
+        total REAL,
+        condition TEXT,
+        life_span INTEGER,
+        date_acquired TEXT,
+        date_created TEXT
+      );
+    ''');
+
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_assets_department ON assets_and_equipment(department);');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_assets_condition  ON assets_and_equipment(condition);');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_assets_employee   ON assets_and_equipment(employee);');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_assets_item_id    ON assets_and_equipment(item_id);');
+  }
+
+  static Future<void> _createAssetsViews(Database db) async {
+    await db.execute('DROP VIEW IF EXISTS v_assets_equipment;');
+    await db.execute('''
+    CREATE VIEW v_assets_equipment AS
+    SELECT
+      a.id,
+      a.item_id,
+      a.item_image,
+      COALESCE(a.quantity,1) AS quantity,
+      a.rfid_code,
+      a.barcode,
+      a.department,
+      a.employee,
+      a.cost_per_item,
+      COALESCE(a.total, COALESCE(a.cost_per_item,0) * COALESCE(a.quantity,1)) AS total,
+      COALESCE(a.condition,'') AS condition,
+      a.life_span AS life_span,
+      CASE
+        WHEN COALESCE(a.life_span,0) > 0
+          THEN COALESCE(a.total, COALESCE(a.cost_per_item,0) * COALESCE(a.quantity,1)) * 1.0 / a.life_span
+        ELSE 0
+      END AS depreciation_value_year,
+      a.date_acquired,
+      a.date_created
+    FROM assets_and_equipment a;
+  ''');
   }
 }

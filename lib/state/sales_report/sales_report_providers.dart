@@ -3,8 +3,8 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sqflite/sqflite.dart';
 
-import 'package:vos_mobile/state/sales_report/sales_report_starte.dart';
 import '../../data/local/app_db.dart';
+import 'package:vos_mobile/state/sales_report/sales_report_starte.dart';
 
 /* ------------------------- Core ChangeNotifier ------------------------- */
 
@@ -42,17 +42,23 @@ class SalesReportFiltersVM {
   final String branch;
   final String salesman;
   final String paymentStatus;
+  final String supplier;
+
   final List<String> branchOptions;
   final List<String> salesmanOptions;
   final List<String> paymentStatusOptions;
+  final List<String> supplierOptions;
+
   const SalesReportFiltersVM({
     required this.period,
     required this.branch,
     required this.salesman,
     required this.paymentStatus,
+    required this.supplier,
     required this.branchOptions,
     required this.salesmanOptions,
     required this.paymentStatusOptions,
+    required this.supplierOptions,
   });
 }
 
@@ -79,9 +85,11 @@ final salesReportFiltersProvider = Provider<SalesReportFiltersVM>((ref) {
     branch: s.selectedBranch,
     salesman: s.selectedSalesman,
     paymentStatus: s.selectedPaymentStatus,
+    supplier: s.selectedSupplier,
     branchOptions: s.branchOptions,
     salesmanOptions: s.salesmanOptions,
     paymentStatusOptions: s.paymentStatusOptions,
+    supplierOptions: s.supplierOptions,
   );
 });
 
@@ -107,6 +115,10 @@ final salesReportSalesmenProvider = Provider<List<String>>(
 
 final salesReportPaymentStatusesProvider = Provider<List<String>>(
       (ref) => ref.watch(salesReportStateProvider).paymentStatusOptions,
+);
+
+final salesReportSuppliersProvider = Provider<List<String>>(
+      (ref) => ref.watch(salesReportStateProvider).supplierOptions,
 );
 
 /* -------------------------- Directory tables --------------------------- */

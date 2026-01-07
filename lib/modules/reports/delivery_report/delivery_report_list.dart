@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-// IMPORTANT: keep only ONE import route for the providers file
 import 'package:vos_mobile/state/data_providers.dart';
 
 class DeliveryReportList extends ConsumerWidget {

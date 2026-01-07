@@ -39,6 +39,9 @@ class SalesReportRow {
   final String? customerProvince;
   final String? customerCity;
 
+  /// Forecast / demand **in cases** for this product family (for export)
+  final double? inCases;
+
   SalesReportRow({
     required this.invoiceNo,
     required this.invoiceDate,
@@ -69,6 +72,7 @@ class SalesReportRow {
     this.salesmanDivision,
     this.customerProvince,
     this.customerCity,
+    this.inCases,
   });
 
   factory SalesReportRow.fromDb(Map<String, Object?> m) {
@@ -129,7 +133,7 @@ class SalesReportRow {
       productName: _strN(m['product_name']),
       productBrand: _strN(m['product_brand']),
       productCategory: _strN(m['product_category']),
-      productSupplier: _strN(m['product_supplier']), // <- from SELECT alias
+      productSupplier: _strN(m['product_supplier']),
       productUnitPrice: _numN(m['product_unit_price']),
       productQuantity: _numN(m['product_quantity']),
       productUnit: _strN(m['product_unit']),
@@ -137,6 +141,44 @@ class SalesReportRow {
       salesmanDivision: _strN(m['salesman_division']),
       customerProvince: _strN(m['customer_province']),
       customerCity: _strN(m['customer_city']),
+      inCases: _numN(m['in_cases']),
+    );
+  }
+
+  SalesReportRow copyWith({
+    double? inCases,
+  }) {
+    return SalesReportRow(
+      invoiceNo: invoiceNo,
+      invoiceDate: invoiceDate,
+      customerName: customerName,
+      customerAddress: customerAddress,
+      salesman: salesman,
+      branch: branch,
+      paymentTerms: paymentTerms,
+      salesType: salesType,
+      invoiceType: invoiceType,
+      transactionStatus: transactionStatus,
+      paymentStatus: paymentStatus,
+      totalAmount: totalAmount,
+      discountAmount: discountAmount,
+      amount: amount,
+      returnAmount: returnAmount,
+      collection: collection,
+      isDispatched: isDispatched,
+      isPosted: isPosted,
+      productName: productName,
+      productBrand: productBrand,
+      productCategory: productCategory,
+      productSupplier: productSupplier,
+      productUnitPrice: productUnitPrice,
+      productQuantity: productQuantity,
+      productUnit: productUnit,
+      productDiscountAmount: productDiscountAmount,
+      salesmanDivision: salesmanDivision,
+      customerProvince: customerProvince,
+      customerCity: customerCity,
+      inCases: inCases ?? this.inCases,
     );
   }
 }
@@ -188,7 +230,7 @@ class SalesReportState extends ChangeNotifier {
 
   /// Order matters: prefer product_supplier if present
   final List<String> _supplierCandidates = const <String>[
-    'product_supplier', // present in your view
+    'product_supplier',
     'supplier_name',
     'supplier',
     'vendor_name',
@@ -213,7 +255,8 @@ class SalesReportState extends ChangeNotifier {
   Future<void> _primeSchema() async {
     try {
       final db = await AppDb.get();
-      final rows = await db.rawQuery("PRAGMA table_info('v_sales_report_itemized')");
+      final rows =
+      await db.rawQuery("PRAGMA table_info('v_sales_report_itemized')");
       _viewColumns = rows
           .map((r) => (r['name'] ?? '').toString().toLowerCase())
           .where((s) => s.isNotEmpty)
@@ -236,7 +279,9 @@ class SalesReportState extends ChangeNotifier {
   String _supplierExprForSelect() {
     final avail = _availableSupplierCols();
     if (avail.isEmpty) return "''";
-    if (avail.contains('product_supplier')) return "COALESCE(product_supplier,'')";
+    if (avail.contains('product_supplier')) {
+      return "COALESCE(product_supplier,'')";
+    }
     final co = avail.map((c) => "NULLIF(TRIM($c),'')").join(', ');
     return "COALESCE($co,'')";
   }
@@ -283,7 +328,10 @@ class SalesReportState extends ChangeNotifier {
     // Basic filters
     branchOptions = ['All Branches', ...await _distinctExpr('branch')];
     salesmanOptions = ['All Salesmen', ...await _distinctExpr('salesman')];
-    paymentStatusOptions = ['All Status', ...await _distinctExpr('payment_status')];
+    paymentStatusOptions = [
+      'All Status',
+      ...await _distinctExpr('payment_status')
+    ];
 
     // Supplier options (schema-aware)
     final avail = _availableSupplierCols();
@@ -303,10 +351,18 @@ class SalesReportState extends ChangeNotifier {
     supplierOptions = ['All Suppliers', ...suppliers];
 
     // Guard selections
-    if (!branchOptions.contains(selectedBranch)) selectedBranch = 'All Branches';
-    if (!salesmanOptions.contains(selectedSalesman)) selectedSalesman = 'All Salesmen';
-    if (!paymentStatusOptions.contains(selectedPaymentStatus)) selectedPaymentStatus = 'All Status';
-    if (!supplierOptions.contains(selectedSupplier)) selectedSupplier = 'All Suppliers';
+    if (!branchOptions.contains(selectedBranch)) {
+      selectedBranch = 'All Branches';
+    }
+    if (!salesmanOptions.contains(selectedSalesman)) {
+      selectedSalesman = 'All Salesmen';
+    }
+    if (!paymentStatusOptions.contains(selectedPaymentStatus)) {
+      selectedPaymentStatus = 'All Status';
+    }
+    if (!supplierOptions.contains(selectedSupplier)) {
+      selectedSupplier = 'All Suppliers';
+    }
 
     notifyListeners();
   }
@@ -333,13 +389,14 @@ class SalesReportState extends ChangeNotifier {
         $whereSql
       ''';
       final cntRow = await db.rawQuery(countSql, args);
-      final totalInvoices =
-      (cntRow.isNotEmpty ? cntRow.first['cnt'] : 0);
-      final totalInvoicesInt = (totalInvoices is num) ? totalInvoices.toInt() : 0;
+      final totalInvoices = (cntRow.isNotEmpty ? cntRow.first['cnt'] : 0);
+      final totalInvoicesInt =
+      (totalInvoices is num) ? totalInvoices.toInt() : 0;
 
       // Page query with normalized supplier alias
       final supplierExpr = _supplierExprForSelect();
 
+      // 🔁 Now we GROUP BY invoice_no so the GridView shows one row per invoice
       final pageSql = '''
         WITH inv AS (
           SELECT DISTINCT invoice_no, date(substr(invoice_date,1,10)) AS d
@@ -350,36 +407,39 @@ class SalesReportState extends ChangeNotifier {
         )
         SELECT
           t.invoice_no,
-          t.invoice_date,
-          t.customer_name,
-          t.customer_address,
-          t.salesman,
-          t.branch,
-          t.payment_terms,
-          t.sales_type,
-          t.invoice_type,
-          t.transaction_status,
-          t.payment_status,
-          t.total_amount,
-          t.discount_amount,
-          t.amount,
-          COALESCE(t.return_amount_total, 0) AS return_amount_total,
-          t.collection,
-          COALESCE(t.isDispatched, t.is_dispatched) AS isDispatched,
-          COALESCE(t.isPosted,     t.is_posted)     AS isPosted,
-          COALESCE(t.product_name,'')         AS product_name,
-          COALESCE(t.product_brand,'')        AS product_brand,
-          COALESCE(t.product_category,'')     AS product_category,
-          $supplierExpr                        AS product_supplier,
-          t.product_unit_price,
-          t.product_quantity,
-          COALESCE(t.product_unit,'')         AS product_unit,
-          t.product_discount_amount,
-          COALESCE(t.salesman_division,'')    AS salesman_division,
-          COALESCE(t.customer_province,'')    AS customer_province,
-          COALESCE(t.customer_city,'')        AS customer_city
+          MAX(t.invoice_date)                AS invoice_date,
+          MAX(t.customer_name)               AS customer_name,
+          MAX(t.customer_address)            AS customer_address,
+          MAX(t.salesman)                    AS salesman,
+          MAX(t.branch)                      AS branch,
+          MAX(t.payment_terms)               AS payment_terms,
+          MAX(t.sales_type)                  AS sales_type,
+          MAX(t.invoice_type)                AS invoice_type,
+          MAX(t.transaction_status)          AS transaction_status,
+          MAX(t.payment_status)              AS payment_status,
+          MAX(t.total_amount)                AS total_amount,
+          MAX(t.discount_amount)             AS discount_amount,
+          MAX(t.amount)                      AS amount,
+          MAX(COALESCE(t.return_amount_total, 0)) AS return_amount_total,
+          MAX(t.collection)                  AS collection,
+          MAX(COALESCE(t.isDispatched, t.is_dispatched)) AS isDispatched,
+          MAX(COALESCE(t.isPosted,     t.is_posted))     AS isPosted,
+          -- For the grid we don't need full itemization, just a representative product
+          MAX(COALESCE(t.product_name,''))   AS product_name,
+          MAX(COALESCE(t.product_brand,''))  AS product_brand,
+          MAX(COALESCE(t.product_category,'')) AS product_category,
+          $supplierExpr                      AS product_supplier,
+          MAX(t.product_unit_price)          AS product_unit_price,
+          MAX(t.product_quantity)            AS product_quantity,
+          MAX(COALESCE(t.product_unit,''))   AS product_unit,
+          MAX(t.product_discount_amount)     AS product_discount_amount,
+          MAX(COALESCE(t.salesman_division,''))    AS salesman_division,
+          MAX(COALESCE(t.customer_province,''))    AS customer_province,
+          MAX(COALESCE(t.customer_city,''))        AS customer_city,
+          MAX(t.in_cases)                          AS in_cases
         FROM v_sales_report_itemized t
         JOIN inv i USING (invoice_no)
+        GROUP BY t.invoice_no
         ORDER BY i.d DESC, t.invoice_no DESC
       ''';
 
@@ -403,48 +463,154 @@ class SalesReportState extends ChangeNotifier {
     await refresh();
   }
 
+  /// Itemized rows for Excel export.
+  /// Now computes `in_cases` using family BOX logic (root_map + box_pick),
+  /// falling back to the simple view column if product_id is not available.
   Future<List<SalesReportRow>> getItemizedRowsForExport() async {
     final db = await AppDb.get();
+
+    // Ensure schema info is primed so we know if product_id exists in the view
+    if (_viewColumns == null) {
+      await _primeSchema();
+    }
+    final hasProductId = _viewColumns?.contains('product_id') ?? false;
+
     final built = await _buildWhere();
     final whereSql = built.$1;
     final args = built.$2;
     final supplierExpr = _supplierExprForSelect();
 
-    final sql = '''
-      SELECT
-        invoice_no,
-        invoice_date,
-        customer_name,
-        customer_address,
-        salesman,
-        branch,
-        payment_terms,
-        sales_type,
-        invoice_type,
-        transaction_status,
-        payment_status,
-        total_amount,
-        discount_amount,
-        amount,
-        COALESCE(return_amount_total, 0) AS return_amount_total,
-        collection,
-        COALESCE(isDispatched, is_dispatched) AS isDispatched,
-        COALESCE(isPosted,     is_posted)     AS isPosted,
-        COALESCE(product_name,'')         AS product_name,
-        COALESCE(product_brand,'')        AS product_brand,
-        COALESCE(product_category,'')     AS product_category,
-        $supplierExpr                      AS product_supplier,
-        product_unit_price,
-        product_quantity,
-        COALESCE(product_unit,'')         AS product_unit,
-        product_discount_amount,
-        COALESCE(salesman_division,'')    AS salesman_division,
-        COALESCE(customer_province,'')    AS customer_province,
-        COALESCE(customer_city,'')        AS customer_city
-      FROM v_sales_report_itemized
-      $whereSql
-      ORDER BY date(substr(invoice_date,1,10)) DESC, invoice_no DESC
-    ''';
+    late final String sql;
+
+    if (hasProductId) {
+      // Advanced path: mirror Java "family, BOX, pieces_per_box" logic
+      sql = '''
+        WITH RECURSIVE root_map AS (
+          SELECT p.product_id, p.parent_id, p.product_id AS root_id
+          FROM products p
+          WHERE p.parent_id IS NULL
+          UNION ALL
+          SELECT c.product_id, c.parent_id, r.root_id
+          FROM products c
+          JOIN root_map r ON c.parent_id = r.product_id
+        ),
+        box_rank AS (
+          SELECT
+            rm.root_id,
+            p.product_id,
+            u."order" AS unit_order,
+            COALESCE(p.unit_of_measurement_count, 1) AS umc,
+            ROW_NUMBER() OVER (
+              PARTITION BY rm.root_id
+              ORDER BY
+                (CASE WHEN u."order" IS NULL THEN 0 ELSE 1 END) DESC,
+                u."order" DESC,
+                COALESCE(p.unit_of_measurement_count, 1) DESC,
+                p.product_id ASC
+            ) AS rn
+          FROM root_map rm
+          JOIN products p
+            ON p.product_id = rm.product_id
+           AND p.isActive = 1
+          LEFT JOIN units u
+            ON u.unit_id = p.unit_of_measurement
+        ),
+        box_pick AS (
+          SELECT
+            br.root_id,
+            br.product_id AS box_product_id,
+            br.umc       AS pieces_per_box
+          FROM box_rank br
+          WHERE br.rn = 1
+        )
+        SELECT
+          vsr.invoice_no,
+          vsr.invoice_date,
+          vsr.customer_name,
+          vsr.customer_address,
+          vsr.salesman,
+          vsr.branch,
+          vsr.payment_terms,
+          vsr.sales_type,
+          vsr.invoice_type,
+          vsr.transaction_status,
+          vsr.payment_status,
+          vsr.total_amount,
+          vsr.discount_amount,
+          vsr.amount,
+          COALESCE(vsr.return_amount_total, 0) AS return_amount_total,
+          vsr.collection,
+          COALESCE(vsr.isDispatched, vsr.is_dispatched) AS isDispatched,
+          COALESCE(vsr.isPosted,     vsr.is_posted)     AS isPosted,
+          COALESCE(vsr.product_name,'')         AS product_name,
+          COALESCE(vsr.product_brand,'')        AS product_brand,
+          COALESCE(vsr.product_category,'')     AS product_category,
+          $supplierExpr                          AS product_supplier,
+          vsr.product_unit_price,
+          vsr.product_quantity,
+          COALESCE(vsr.product_unit,'')         AS product_unit,
+          vsr.product_discount_amount,
+          COALESCE(vsr.salesman_division,'')    AS salesman_division,
+          COALESCE(vsr.customer_province,'')    AS customer_province,
+          COALESCE(vsr.customer_city,'')        AS customer_city,
+          CASE
+            WHEN vsr.product_id IS NULL THEN NULL
+            ELSE
+              (
+                COALESCE(vsr.product_quantity, 0.0)
+                * COALESCE(p.unit_of_measurement_count, 1.0)
+              )
+              / NULLIF(bp.pieces_per_box, 0.0)
+          END AS in_cases
+        FROM v_sales_report_itemized vsr
+        LEFT JOIN products p
+          ON p.product_id = vsr.product_id
+        LEFT JOIN root_map rm
+          ON rm.product_id = p.product_id
+        LEFT JOIN box_pick bp
+          ON bp.root_id = rm.root_id
+        $whereSql
+        ORDER BY date(substr(vsr.invoice_date,1,10)) DESC, vsr.invoice_no DESC
+      ''';
+    } else {
+      // Fallback: use whatever in_cases column the view has (or null)
+      sql = '''
+        SELECT
+          invoice_no,
+          invoice_date,
+          customer_name,
+          customer_address,
+          salesman,
+          branch,
+          payment_terms,
+          sales_type,
+          invoice_type,
+          transaction_status,
+          payment_status,
+          total_amount,
+          discount_amount,
+          amount,
+          COALESCE(return_amount_total, 0) AS return_amount_total,
+          collection,
+          COALESCE(isDispatched, is_dispatched) AS isDispatched,
+          COALESCE(isPosted,     is_posted)     AS isPosted,
+          COALESCE(product_name,'')         AS product_name,
+          COALESCE(product_brand,'')        AS product_brand,
+          COALESCE(product_category,'')     AS product_category,
+          $supplierExpr                      AS product_supplier,
+          product_unit_price,
+          product_quantity,
+          COALESCE(product_unit,'')         AS product_unit,
+          product_discount_amount,
+          COALESCE(salesman_division,'')    AS salesman_division,
+          COALESCE(customer_province,'')    AS customer_province,
+          COALESCE(customer_city,'')        AS customer_city,
+          in_cases
+        FROM v_sales_report_itemized
+        $whereSql
+        ORDER BY date(substr(invoice_date,1,10)) DESC, invoice_no DESC
+      ''';
+    }
 
     final rs = await db.rawQuery(sql, args);
     return rs.map((e) => SalesReportRow.fromDb(e)).toList();
@@ -495,7 +661,8 @@ class SalesReportState extends ChangeNotifier {
 
   void setMonth(int year, int month) {
     final first = DateTime(year, month, 1);
-    final last = DateTime(year, month + 1, 1).subtract(const Duration(days: 1));
+    final last =
+    DateTime(year, month + 1, 1).subtract(const Duration(days: 1));
     selectedPeriod = 'Custom';
     customFrom = first;
     customTo = last;
@@ -573,7 +740,8 @@ class SalesReportState extends ChangeNotifier {
       } else {
         if (kDebugMode) {
           // ignore: avoid_print
-          print('[SalesReport] No supplier columns found; supplier filter ignored.');
+          print(
+              '[SalesReport] No supplier columns found; supplier filter ignored.');
         }
       }
     }
@@ -598,19 +766,24 @@ class SalesReportState extends ChangeNotifier {
         return (mon, sun);
       case 'This Month':
         final first = DateTime(now.year, now.month, 1);
-        final last = DateTime(now.year, now.month + 1, 1).subtract(const Duration(days: 1));
+        final last = DateTime(now.year, now.month + 1, 1)
+            .subtract(const Duration(days: 1));
         return (first, last);
       case 'This Quarter':
         final q = ((now.month - 1) ~/ 3) + 1;
         final firstMonth = (q - 1) * 3 + 1;
         final first = DateTime(now.year, firstMonth, 1);
-        final last = DateTime(now.year, firstMonth + 3, 1).subtract(const Duration(days: 1));
+        final last = DateTime(now.year, firstMonth + 3, 1)
+            .subtract(const Duration(days: 1));
         return (first, last);
       case 'This Year':
         return (DateTime(now.year, 1, 1), DateTime(now.year, 12, 31));
       case 'Custom':
         if (customFrom != null && customTo != null) {
-          return (startOfDay(customFrom!), endOfDay(customTo!));
+          return (
+          startOfDay(customFrom!),
+          endOfDay(customTo!),
+          );
         }
         return null;
       default:

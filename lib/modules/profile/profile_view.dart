@@ -9,7 +9,6 @@ import 'package:vos_mobile/state/accounts_payable/accounts_payable_state.dart';
 import 'package:vos_mobile/state/delivery_report/delivery_report_state.dart';
 
 // NEW: Sales Report (Riverpod) providers.
-// If your app doesn't have these exact files yet, either create them or remove these imports + invalidations below.
 import 'package:vos_mobile/state/sales_report/sales_report_providers.dart';
 
 class ProfileView extends ConsumerStatefulWidget {
@@ -21,6 +20,8 @@ class ProfileView extends ConsumerStatefulWidget {
 
 class _ProfileViewState extends ConsumerState<ProfileView> {
   bool _isSyncing = false;
+  String? _progressLabel;
+  double? _progressValue; // 0–1, null = indeterminate
 
   /// ONLY invalidates providers; never runs sync here.
   Future<void> _refreshReadModels() async {
@@ -39,41 +40,73 @@ class _ProfileViewState extends ConsumerState<ProfileView> {
     await ref.read(arNotifierProvider.notifier).refresh();
 
     // ---------------- Sales Report (NEW) --------------
-    // These should cover: list rows, metrics, and filter option sources.
-    // Remove any that you don't use yet.
-    ref.invalidate(salesReportRowsProvider);          // paged/filtered v_sales_report rows
-    ref.invalidate(salesReportMetricsProvider);       // totals (sales, collection, returns, discounts)
-    ref.invalidate(salesReportFiltersProvider);       // current filter state/presets
-    ref.invalidate(salesReportBranchesProvider);      // distinct branches (from v_sales_report)
-    ref.invalidate(salesReportSalesmenProvider);      // distinct salesmen (from v_sales_report or salesman table)
+    ref.invalidate(salesReportRowsProvider); // paged/filtered v_sales_report rows
+    ref.invalidate(salesReportMetricsProvider); // totals (sales, collection, returns, discounts)
+    ref.invalidate(salesReportFiltersProvider); // current filter state/presets
+    ref.invalidate(salesReportBranchesProvider); // distinct branches
+    ref.invalidate(salesReportSalesmenProvider); // distinct salesmen
     ref.invalidate(salesReportPaymentStatusesProvider); // distinct payment_status
-    ref.invalidate(salesmanDirectoryProvider);        // full salesman table (new endpoint)
-    ref.invalidate(paymentTermsDirectoryProvider);    // payment_terms endpoint
-    ref.invalidate(operationDirectoryProvider);       // operation endpoint
-    ref.invalidate(invoiceTypeDirectoryProvider);     // sales_invoice_type endpoint
-    ref.invalidate(salesReturnDirectoryProvider);     // sales_return endpoint
+    ref.invalidate(salesmanDirectoryProvider); // full salesman table
+    ref.invalidate(paymentTermsDirectoryProvider); // payment_terms endpoint
+    ref.invalidate(operationDirectoryProvider); // operation endpoint
+    ref.invalidate(invoiceTypeDirectoryProvider); // sales_invoice_type endpoint
+    ref.invalidate(salesReturnDirectoryProvider); // sales_return endpoint
+
+    // ---------------- Assets & Equipment (OPTIONAL) ---
+    // If you have Riverpod providers for your assets/equipment views,
+    // invalidate them here so they refresh after sync.
+    //
+    // Example (adjust to your actual provider names):
+    // ref.invalidate(assetsAndEquipmentProvider);
+    // ref.invalidate(itemTypeDirectoryProvider);
+    // ref.invalidate(itemsDirectoryProvider);
+    // ref.invalidate(assetsDepartmentDirectoryProvider);
   }
 
   Future<void> _syncNow({bool fullReset = false}) async {
     if (_isSyncing) return;
-    setState(() => _isSyncing = true);
+
+    setState(() {
+      _isSyncing = true;
+      _progressLabel = 'Preparing sync…';
+      _progressValue = 0.0;
+    });
+
     try {
       final repo = ref.read(syncRepoProvider);
 
       if (fullReset) {
-        // Hard wipe + reseed
-        await repo.syncAllFullReset();
-      } else {
-        // Strict mirror to avoid mixing old data
-        await repo.syncAll(purge: true);
+        // Hard wipe before progress sync
+        await repo.wipeLocal();
       }
+
+      // New: progress-aware sync
+      final errors = await repo.syncAllWithProgress(
+        purge: true,
+        onProgress: (progress) {
+          if (!mounted) return;
+          setState(() {
+            _progressLabel =
+            '(${progress.step}/${progress.total}) ${progress.label}';
+            _progressValue =
+            progress.total == 0 ? null : progress.step / progress.total;
+          });
+        },
+      );
 
       // Now that data is fresh, rebuild read models
       await _refreshReadModels();
 
       if (!mounted) return;
+
+      final baseMsg =
+      fullReset ? 'Full reseed completed.' : 'Sync completed.';
+      final errorMsg = errors.isEmpty
+          ? ''
+          : ' (${errors.length} task${errors.length == 1 ? '' : 's'} had issues – see logs.)';
+
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(fullReset ? 'Full reseed completed' : 'Sync completed')),
+        SnackBar(content: Text('$baseMsg$errorMsg')),
       );
     } catch (e) {
       if (!mounted) return;
@@ -81,29 +114,38 @@ class _ProfileViewState extends ConsumerState<ProfileView> {
         SnackBar(content: Text('Sync failed: $e')),
       );
     } finally {
-      if (mounted) setState(() => _isSyncing = false);
+      if (!mounted) return;
+      setState(() {
+        _isSyncing = false;
+        _progressLabel = null;
+        _progressValue = null;
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           const CircleAvatar(radius: 36, child: Icon(Icons.person, size: 32)),
           const SizedBox(height: 10),
-          Text('Your Profile', style: Theme.of(context).textTheme.titleLarge),
+          Text('Your Profile', style: theme.textTheme.titleLarge),
           const SizedBox(height: 4),
           Text(
             'Manage account settings and preferences',
-            style: Theme.of(context).textTheme.bodySmall,
+            style: theme.textTheme.bodySmall,
           ),
           const SizedBox(height: 16),
           Tooltip(
-            message: 'Tap: normal sync (purge) • Long-press: full reseed (wipe local cache)',
+            message:
+            'Tap: normal sync (purge)\nLong-press: full reseed (wipe local cache)',
             child: GestureDetector(
-              onLongPress: _isSyncing ? null : () => _syncNow(fullReset: true),
+              onLongPress:
+              _isSyncing ? null : () => _syncNow(fullReset: true),
               child: FilledButton.icon(
                 onPressed: _isSyncing ? null : () => _syncNow(),
                 icon: _isSyncing
@@ -117,6 +159,21 @@ class _ProfileViewState extends ConsumerState<ProfileView> {
               ),
             ),
           ),
+
+          // Progress bar + label while syncing
+          if (_isSyncing) ...[
+            const SizedBox(height: 16),
+            SizedBox(
+              width: 260,
+              child: LinearProgressIndicator(value: _progressValue),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _progressLabel ?? 'Syncing…',
+              style: theme.textTheme.bodySmall,
+              textAlign: TextAlign.center,
+            ),
+          ],
         ],
       ),
     );

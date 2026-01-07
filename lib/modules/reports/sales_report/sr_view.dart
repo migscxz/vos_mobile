@@ -10,8 +10,7 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
-// ✅ Use the correct package path to your updated state file
-// If your file is named differently, change this import accordingly.
+// ✅ Correct path to your updated state file
 import 'package:vos_mobile/state/sales_report/sales_report_starte.dart';
 
 import 'package:sqflite/sqflite.dart';
@@ -52,7 +51,8 @@ class _SalesReportViewState extends State<SalesReportView> {
   }
 
   /// Split a quantity into Ties / Boxes / Pieces based on the productUnit string.
-  ({double ties, double boxes, double pieces}) _splitQtyByUnit(num? qty, String? unitRaw) {
+  ({double ties, double boxes, double pieces}) _splitQtyByUnit(
+      num? qty, String? unitRaw) {
     final q = (qty ?? 0).toDouble();
     final u = (unitRaw ?? '').toLowerCase().trim();
     double ties = 0, boxes = 0, pieces = 0;
@@ -141,6 +141,9 @@ class _SalesReportViewState extends State<SalesReportView> {
     final currency = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
     final width = MediaQuery.sizeOf(context).width;
     final isTablet = width >= 900;
+
+    // 🔑 Deduplicate rows by invoice (fix "quad entry" in UI)
+    final visibleRows = _dedupSalesRows(state.rows);
 
     return Scaffold(
       backgroundColor: Colors.grey[50],
@@ -307,7 +310,7 @@ class _SalesReportViewState extends State<SalesReportView> {
                   )
                 else
                   Text(
-                    '${state.rows.length} records',
+                    '${visibleRows.length} records',
                     style: TextStyle(
                       fontSize: isTablet ? 14 : 13,
                       color: Colors.grey,
@@ -327,10 +330,10 @@ class _SalesReportViewState extends State<SalesReportView> {
               error: state.error!,
               onRetry: () => state.refresh(),
             )
-                : state.rows.isEmpty && !state.loading
+                : visibleRows.isEmpty && !state.loading
                 ? const _EmptyWidget()
                 : _InvoiceList(
-              rows: state.rows,
+              rows: visibleRows,
               hasMore: state.hasMore,
               onNeedMore: state.loadMore,
               isTablet: isTablet,
@@ -392,7 +395,8 @@ class _SalesReportViewState extends State<SalesReportView> {
                 ListTile(
                   leading: const Icon(Icons.table_chart, color: Colors.green),
                   title: const Text('Export as Excel (Itemized)'),
-                  subtitle: const Text('Includes Product/Brand/Category/Supplier/Unit'),
+                  subtitle:
+                  const Text('Includes Product/Brand/Category/Supplier/Unit/In Cases'),
                   onTap: () async {
                     Navigator.pop(context);
                     await _exportExcel(itemized: true);
@@ -435,6 +439,9 @@ class _SalesReportViewState extends State<SalesReportView> {
 
       const pageFormat = PdfPageFormat.legal;
 
+      // use deduped rows for PDF as well
+      final rows = _dedupSalesRows(state.rows);
+
       pdf.addPage(
         pw.MultiPage(
           pageFormat: pageFormat,
@@ -476,9 +483,11 @@ class _SalesReportViewState extends State<SalesReportView> {
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
                   _buildPdfSummaryItem('Total Sales', currency.format(state.totalSales)),
-                  _buildPdfSummaryItem('Collection', currency.format(state.totalCollection)),
+                  _buildPdfSummaryItem(
+                      'Collection', currency.format(state.totalCollection)),
                   _buildPdfSummaryItem('Returns', currency.format(state.totalReturns)),
-                  _buildPdfSummaryItem('Discounts', currency.format(state.totalDiscounts)),
+                  _buildPdfSummaryItem(
+                      'Discounts', currency.format(state.totalDiscounts)),
                 ],
               ),
             ),
@@ -512,8 +521,9 @@ class _SalesReportViewState extends State<SalesReportView> {
                     _buildPdfTableHeader('Status'),
                   ],
                 ),
-                ...state.rows.map((row) {
-                  final dateStr = row.invoiceDate != null ? dateFormat.format(row.invoiceDate!) : '—';
+                ...rows.map((row) {
+                  final dateStr =
+                  row.invoiceDate != null ? dateFormat.format(row.invoiceDate!) : '—';
                   return pw.TableRow(
                     children: [
                       _buildPdfTableCell(row.invoiceNo),
@@ -521,8 +531,10 @@ class _SalesReportViewState extends State<SalesReportView> {
                       _buildPdfTableCell(row.customerName),
                       _buildPdfTableCell(row.salesman),
                       _buildPdfTableCell(row.branch),
-                      _buildPdfTableCell(currency.format(row.totalAmount), align: pw.TextAlign.right),
-                      _buildPdfTableCell(currency.format(row.collection), align: pw.TextAlign.right),
+                      _buildPdfTableCell(currency.format(row.totalAmount),
+                          align: pw.TextAlign.right),
+                      _buildPdfTableCell(currency.format(row.collection),
+                          align: pw.TextAlign.right),
                       _buildPdfTableCell(row.paymentStatus),
                     ],
                   );
@@ -537,7 +549,7 @@ class _SalesReportViewState extends State<SalesReportView> {
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               children: [
                 pw.Text(
-                  'Total Records: ${state.rows.length}',
+                  'Total Records: ${rows.length}',
                   style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
                 ),
                 pw.Column(
@@ -545,7 +557,8 @@ class _SalesReportViewState extends State<SalesReportView> {
                   children: [
                     pw.Text(
                       'Grand Total: ${currency.format(state.totalCollection)}',
-                      style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold),
+                      style:
+                      pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold),
                     ),
                   ],
                 ),
@@ -576,7 +589,8 @@ class _SalesReportViewState extends State<SalesReportView> {
 
       await Printing.layoutPdf(
         onLayout: (format) async => pdf.save(),
-        name: 'sales_report_${DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())}.pdf',
+        name:
+        'sales_report_${DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())}.pdf',
       );
     } catch (e) {
       if (mounted) {
@@ -637,13 +651,19 @@ class _SalesReportViewState extends State<SalesReportView> {
     try {
       List<SalesReportRow> rowsForExport;
       if (itemized) {
+        // ✅ Uses SalesReportState.getItemizedRowsForExport,
+        // which now can compute inCases via product family BOX logic.
         try {
           rowsForExport = await state.getItemizedRowsForExport();
         } catch (_) {
-          rowsForExport = state.rows;
+          // Fallback to header-only rows, already deduped by invoice
+          rowsForExport = _dedupSalesRows(state.rows);
         }
+        // 🔁 Extra safety: kill any quad duplicates per invoice+product
+        rowsForExport = _dedupItemizedRows(rowsForExport);
       } else {
-        rowsForExport = state.rows;
+        // Header-only export should not contain duplicates
+        rowsForExport = _dedupSalesRows(state.rows);
       }
 
       final divisionLookup = await _loadDivisionLookup();
@@ -651,20 +671,19 @@ class _SalesReportViewState extends State<SalesReportView> {
       final excel = xl.Excel.createExcel();
       final sheet = excel['Sales Report'];
 
-      final currency = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
       final dateFormat = DateFormat('MMM dd, yyyy');
 
       // Base column widths
-      sheet.setColumnWidth(0, 15);  // Invoice No
-      sheet.setColumnWidth(1, 12);  // Date
-      sheet.setColumnWidth(2, 25);  // Customer
-      sheet.setColumnWidth(3, 20);  // Salesman
-      sheet.setColumnWidth(4, 15);  // Branch
-      sheet.setColumnWidth(5, 15);  // Payment Terms
-      sheet.setColumnWidth(6, 12);  // Sales Type
-      sheet.setColumnWidth(7, 15);  // Total Amount (invoice)
-      sheet.setColumnWidth(8, 15);  // Discount (invoice)
-      sheet.setColumnWidth(9, 15);  // Returns (invoice)
+      sheet.setColumnWidth(0, 15); // Invoice No
+      sheet.setColumnWidth(1, 12); // Date
+      sheet.setColumnWidth(2, 25); // Customer
+      sheet.setColumnWidth(3, 20); // Salesman
+      sheet.setColumnWidth(4, 15); // Branch
+      sheet.setColumnWidth(5, 15); // Payment Terms
+      sheet.setColumnWidth(6, 12); // Sales Type
+      sheet.setColumnWidth(7, 15); // Total Amount (invoice)
+      sheet.setColumnWidth(8, 15); // Discount (invoice)
+      sheet.setColumnWidth(9, 15); // Returns (invoice)
       sheet.setColumnWidth(10, 15); // Collection (invoice)
       sheet.setColumnWidth(11, 12); // Status
 
@@ -679,12 +698,13 @@ class _SalesReportViewState extends State<SalesReportView> {
         sheet.setColumnWidth(18, 12); // Ties
         sheet.setColumnWidth(19, 12); // Boxes
         sheet.setColumnWidth(20, 12); // Pieces
-        sheet.setColumnWidth(21, 16); // Division
-        sheet.setColumnWidth(22, 16); // Customer Province
-        sheet.setColumnWidth(23, 16); // Customer City
-        sheet.setColumnWidth(24, 16); // Line Gross
-        sheet.setColumnWidth(25, 16); // Line Discount
-        sheet.setColumnWidth(26, 18); // Line Net
+        sheet.setColumnWidth(21, 16); // In Cases
+        sheet.setColumnWidth(22, 16); // Division
+        sheet.setColumnWidth(23, 16); // Customer Province
+        sheet.setColumnWidth(24, 16); // Customer City
+        sheet.setColumnWidth(25, 16); // Line Gross
+        sheet.setColumnWidth(26, 16); // Line Discount
+        sheet.setColumnWidth(27, 18); // Line Net
       }
 
       int row = 0;
@@ -714,16 +734,17 @@ class _SalesReportViewState extends State<SalesReportView> {
         'Ties',
         'Boxes',
         'Pieces',
+        'In Cases',
         'Division',
         'Customer Province',
         'Customer City',
-        // New, use these for supplier-filtered sums:
         'Line Gross',
         'Line Discount',
         'Line Net',
       ];
 
-      final headers = itemized ? [...headerInvoiceCols, ...headerItemizedCols] : headerInvoiceCols;
+      final headers =
+      itemized ? [...headerInvoiceCols, ...headerItemizedCols] : headerInvoiceCols;
 
       // Title
       sheet.merge(
@@ -759,7 +780,8 @@ class _SalesReportViewState extends State<SalesReportView> {
 
       // Header row
       for (int i = 0; i < headers.length; i++) {
-        var cell = sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: row));
+        var cell =
+        sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: row));
         cell.value = xl.TextCellValue(headers[i]);
         cell.cellStyle = xl.CellStyle(
           bold: true,
@@ -771,7 +793,8 @@ class _SalesReportViewState extends State<SalesReportView> {
 
       // Data rows
       for (var data in rowsForExport) {
-        final dateStr = data.invoiceDate != null ? dateFormat.format(data.invoiceDate!) : null;
+        final dateStr =
+        data.invoiceDate != null ? dateFormat.format(data.invoiceDate!) : null;
 
         // Always write invoice-level values in their fixed columns
         _writeTextOrNA(sheet, col: 0, row: row, text: data.invoiceNo);
@@ -783,9 +806,9 @@ class _SalesReportViewState extends State<SalesReportView> {
         _writeTextOrNA(sheet, col: 6, row: row, text: data.salesType);
 
         // These are invoice-level totals; keep for reference
-        _writeNumOrNA(sheet, col: 7,  row: row, value: data.totalAmount);
-        _writeNumOrNA(sheet, col: 8,  row: row, value: data.discountAmount);
-        _writeNumOrNA(sheet, col: 9,  row: row, value: data.returnAmount);
+        _writeNumOrNA(sheet, col: 7, row: row, value: data.totalAmount);
+        _writeNumOrNA(sheet, col: 8, row: row, value: data.discountAmount);
+        _writeNumOrNA(sheet, col: 9, row: row, value: data.returnAmount);
         _writeNumOrNA(sheet, col: 10, row: row, value: data.collection);
         _writeTextOrNA(sheet, col: 11, row: row, text: data.paymentStatus);
 
@@ -796,10 +819,13 @@ class _SalesReportViewState extends State<SalesReportView> {
           _writeTextOrNA(sheet, col: 15, row: row, text: data.productSupplier);
 
           final unitPrice = (data.productUnitPrice ?? 0);
-          final qty       = (data.productQuantity ?? 0);
+          final qty = (data.productQuantity ?? 0);
           final lineGross = unitPrice * qty;
-          final lineDisc  = (data.productDiscountAmount ?? 0);
-          final lineNet   = lineGross - lineDisc;
+          final lineDisc = (data.productDiscountAmount ?? 0);
+          final lineNet = lineGross - lineDisc;
+
+          // ✅ inCases comes directly from the SQL via SalesReportRow.inCases
+          final inCases = data.inCases;
 
           _writeNumOrNA(sheet, col: 16, row: row, value: unitPrice);
           _writeNumOrNA(sheet, col: 17, row: row, value: qty);
@@ -809,6 +835,9 @@ class _SalesReportViewState extends State<SalesReportView> {
           _writeNumOrNA(sheet, col: 19, row: row, value: split.boxes);
           _writeNumOrNA(sheet, col: 20, row: row, value: split.pieces);
 
+          // "In Cases" column
+          _writeNumOrNA(sheet, col: 21, row: row, value: inCases);
+
           String? divText = data.salesmanDivision;
           if (divText != null && divText.trim().isNotEmpty && _isNumeric(divText)) {
             final id = int.tryParse(divText.trim());
@@ -816,15 +845,14 @@ class _SalesReportViewState extends State<SalesReportView> {
               divText = divisionLookup[id] ?? divText;
             }
           }
-          _writeTextOrNA(sheet, col: 21, row: row, text: divText);
+          _writeTextOrNA(sheet, col: 22, row: row, text: divText);
 
-          _writeTextOrNA(sheet, col: 22, row: row, text: data.customerProvince);
-          _writeTextOrNA(sheet, col: 23, row: row, text: data.customerCity);
+          _writeTextOrNA(sheet, col: 23, row: row, text: data.customerProvince);
+          _writeTextOrNA(sheet, col: 24, row: row, text: data.customerCity);
 
-          // NEW: per-line financials — use these for sums after filtering by supplier
-          _writeNumOrNA(sheet, col: 24, row: row, value: lineGross);
-          _writeNumOrNA(sheet, col: 25, row: row, value: lineDisc);
-          _writeNumOrNA(sheet, col: 26, row: row, value: lineNet);
+          _writeNumOrNA(sheet, col: 25, row: row, value: lineGross);
+          _writeNumOrNA(sheet, col: 26, row: row, value: lineDisc);
+          _writeNumOrNA(sheet, col: 27, row: row, value: lineNet);
         }
 
         row++;
@@ -833,7 +861,8 @@ class _SalesReportViewState extends State<SalesReportView> {
       final bytes = excel.encode();
       if (bytes != null) {
         final dir = await getTemporaryDirectory();
-        final filename = 'sales_report_${DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())}.xlsx';
+        final filename =
+            'sales_report_${DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())}.xlsx';
         final file = File('${dir.path}/$filename');
         await file.writeAsBytes(bytes);
 
@@ -845,7 +874,9 @@ class _SalesReportViewState extends State<SalesReportView> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(itemized ? 'Excel (Itemized) file generated successfully' : 'Excel (Header) file generated successfully'),
+              content: Text(itemized
+                  ? 'Excel (Itemized) file generated successfully'
+                  : 'Excel (Header) file generated successfully'),
               backgroundColor: Colors.green,
             ),
           );
@@ -878,7 +909,8 @@ class _SalesReportViewState extends State<SalesReportView> {
   // Write a text cell, or 'N/A' when text is null/empty
   void _writeTextOrNA(xl.Sheet sheet, {required int col, required int row, String? text}) {
     final v = (text == null || text.trim().isEmpty) ? 'N/A' : text.trim();
-    sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: col, rowIndex: row)).value = xl.TextCellValue(v);
+    sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: col, rowIndex: row)).value =
+        xl.TextCellValue(v);
   }
 
   // Write numeric when non-null, else 'N/A'
@@ -1010,7 +1042,9 @@ class _SalesReportViewState extends State<SalesReportView> {
 
   void _exportCsv() async {
     final divisionLookup = await _loadDivisionLookup();
-    final csv = salesReportToCsv(state.rows, divisionLookup: divisionLookup);
+    // Dedup for CSV as well so we don't export quad entries
+    final csv =
+    salesReportToCsv(_dedupSalesRows(state.rows), divisionLookup: divisionLookup);
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1062,6 +1096,49 @@ class _SalesReportViewState extends State<SalesReportView> {
   }
 }
 
+/* ======================= DEDUP HELPERS ======================= */
+
+/// Keep only one row per (invoiceNo + invoiceDate) combination (header-level).
+List<SalesReportRow> _dedupSalesRows(List<SalesReportRow> rows) {
+  final seen = <String>{};
+  final result = <SalesReportRow>[];
+
+  for (final r in rows) {
+    final key = '${r.invoiceNo}::${r.invoiceDate?.toIso8601String() ?? ''}';
+    if (seen.add(key)) {
+      result.add(r);
+    }
+  }
+
+  return result;
+}
+
+/// Itemized-level dedup: collapse identical lines per invoice+product combo
+/// to avoid quad entries from joins.
+List<SalesReportRow> _dedupItemizedRows(List<SalesReportRow> rows) {
+  final seen = <String>{};
+  final result = <SalesReportRow>[];
+
+  for (final r in rows) {
+    final key = [
+      r.invoiceNo,
+      r.invoiceDate?.toIso8601String() ?? '',
+      r.productName ?? '',
+      r.productBrand ?? '',
+      r.productCategory ?? '',
+      (r.productUnitPrice ?? 0).toStringAsFixed(4),
+      (r.productQuantity ?? 0).toString(),
+      r.productUnit ?? '',
+    ].join('::');
+
+    if (seen.add(key)) {
+      result.add(r);
+    }
+  }
+
+  return result;
+}
+
 /* ======================= PRESENTATION WIDGETS ======================= */
 
 class _InvoiceList extends StatefulWidget {
@@ -1086,7 +1163,8 @@ class _InvoiceListState extends State<_InvoiceList> {
 
   @override
   Widget build(BuildContext context) {
-    final pad = widget.isTablet ? const EdgeInsets.all(18) : const EdgeInsets.all(16);
+    final pad =
+    widget.isTablet ? const EdgeInsets.all(18) : const EdgeInsets.all(16);
 
     if (!widget.isTablet) {
       // Phone: ListView
@@ -1106,7 +1184,10 @@ class _InvoiceListState extends State<_InvoiceList> {
             return const Center(
               child: Padding(
                 padding: EdgeInsets.symmetric(vertical: 12),
-                child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+                child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2)),
               ),
             );
           }
@@ -1128,7 +1209,8 @@ class _InvoiceListState extends State<_InvoiceList> {
         crossAxisCount: crossAxisCount,
         mainAxisSpacing: 16,
         crossAxisSpacing: 16,
-        mainAxisExtent: 220,
+        // ⬆️ increased height so cards don't overflow in landscape
+        mainAxisExtent: 320,
       ),
       itemBuilder: (context, index) {
         if (index >= widget.rows.length) {
@@ -1140,7 +1222,10 @@ class _InvoiceListState extends State<_InvoiceList> {
             });
           }
           return const Center(
-            child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
+            child: SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2)),
           );
         }
         final row = widget.rows[index];
@@ -1168,7 +1253,8 @@ class _CompactMetricCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: isTablet ? 14 : 12, vertical: isTablet ? 12 : 10),
+      padding: EdgeInsets.symmetric(
+          horizontal: isTablet ? 14 : 12, vertical: isTablet ? 12 : 10),
       decoration: BoxDecoration(
         color: color.withOpacity(0.08),
         borderRadius: BorderRadius.circular(10),
@@ -1227,7 +1313,8 @@ class _CompactFilterChip extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Container(
-        padding: EdgeInsets.symmetric(horizontal: isTablet ? 12 : 10, vertical: isTablet ? 9 : 8),
+        padding: EdgeInsets.symmetric(
+            horizontal: isTablet ? 12 : 10, vertical: isTablet ? 9 : 8),
         decoration: BoxDecoration(
           color: Colors.grey[100],
           borderRadius: BorderRadius.circular(8),
@@ -1247,7 +1334,8 @@ class _CompactFilterChip extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 4),
-            Icon(Icons.arrow_drop_down, size: isTablet ? 20 : 18, color: Colors.grey[700]),
+            Icon(Icons.arrow_drop_down,
+                size: isTablet ? 20 : 18, color: Colors.grey[700]),
           ],
         ),
       ),
@@ -1348,7 +1436,8 @@ class _SalesInvoiceCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dateFormat = DateFormat('MMM dd, yyyy');
-    final dateStr = row.invoiceDate != null ? dateFormat.format(row.invoiceDate!) : '—';
+    final dateStr =
+    row.invoiceDate != null ? dateFormat.format(row.invoiceDate!) : '—';
     final currency = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
 
     final paid = row.paymentStatus.toLowerCase() == 'paid';
@@ -1452,7 +1541,8 @@ class _SalesInvoiceCard extends StatelessWidget {
             const SizedBox(height: 6),
             Row(
               children: [
-                Icon(Icons.location_on, size: isTablet ? 15 : 14, color: Colors.grey[600]),
+                Icon(Icons.location_on,
+                    size: isTablet ? 15 : 14, color: Colors.grey[600]),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
@@ -1518,14 +1608,23 @@ class _SalesInvoiceCard extends StatelessWidget {
             const SizedBox(height: 10),
 
             // Amount Breakdown - Compact
-            _CompactAmountRow(label: 'Total', amount: row.totalAmount, isTablet: isTablet),
+            _CompactAmountRow(
+                label: 'Total', amount: row.totalAmount, isTablet: isTablet),
             if (row.discountAmount > 0) ...[
               const SizedBox(height: 4),
-              _CompactAmountRow(label: 'Discount', amount: row.discountAmount, isNegative: true, isTablet: isTablet),
+              _CompactAmountRow(
+                  label: 'Discount',
+                  amount: row.discountAmount,
+                  isNegative: true,
+                  isTablet: isTablet),
             ],
             if (row.returnAmount > 0) ...[
               const SizedBox(height: 4),
-              _CompactAmountRow(label: 'Returns', amount: row.returnAmount, isNegative: true, isTablet: isTablet),
+              _CompactAmountRow(
+                  label: 'Returns',
+                  amount: row.returnAmount,
+                  isNegative: true,
+                  isTablet: isTablet),
             ],
             const SizedBox(height: 6),
             Container(
@@ -1539,7 +1638,8 @@ class _SalesInvoiceCard extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      Icon(Icons.check_circle, size: isTablet ? 15 : 14, color: Colors.green[700]),
+                      Icon(Icons.check_circle,
+                          size: isTablet ? 15 : 14, color: Colors.green[700]),
                       const SizedBox(width: 6),
                       Text(
                         'Collection',
@@ -1552,7 +1652,8 @@ class _SalesInvoiceCard extends StatelessWidget {
                     ],
                   ),
                   Text(
-                    NumberFormat.currency(symbol: '₱', decimalDigits: 2).format(row.collection),
+                    NumberFormat.currency(symbol: '₱', decimalDigits: 2)
+                        .format(row.collection),
                     style: TextStyle(
                       fontSize: isTablet ? 14 : 13,
                       fontWeight: FontWeight.bold,
@@ -1567,10 +1668,19 @@ class _SalesInvoiceCard extends StatelessWidget {
               const SizedBox(height: 10),
               Row(
                 children: [
-                  if (row.isPosted) _TinyBadge(label: 'Posted', icon: Icons.check_circle, color: Colors.blue, isTablet: isTablet),
+                  if (row.isPosted)
+                    _TinyBadge(
+                        label: 'Posted',
+                        icon: Icons.check_circle,
+                        color: Colors.blue,
+                        isTablet: isTablet),
                   if (row.isDispatched) const SizedBox(width: 6),
                   if (row.isDispatched)
-                    _TinyBadge(label: 'Dispatched', icon: Icons.local_shipping, color: Colors.purple, isTablet: isTablet),
+                    _TinyBadge(
+                        label: 'Dispatched',
+                        icon: Icons.local_shipping,
+                        color: Colors.purple,
+                        isTablet: isTablet),
                 ],
               ),
             ],
@@ -1630,14 +1740,17 @@ class _CompactAmountRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final formatter = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
-    final displayAmount = isNegative ? '-${formatter.format(amount)}' : formatter.format(amount);
+    final displayAmount =
+    isNegative ? '-${formatter.format(amount)}' : formatter.format(amount);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: TextStyle(fontSize: isTablet ? 13 : 12, color: Colors.grey[700])),
+          Text(label,
+              style: TextStyle(
+                  fontSize: isTablet ? 13 : 12, color: Colors.grey[700])),
           Text(
             displayAmount,
             style: TextStyle(
@@ -1666,7 +1779,8 @@ class _StatusBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: isTablet ? 10 : 8, vertical: 3),
+      padding:
+      EdgeInsets.symmetric(horizontal: isTablet ? 10 : 8, vertical: 3),
       decoration: BoxDecoration(
         color: color.withOpacity(0.1),
         borderRadius: BorderRadius.circular(10),
@@ -1700,7 +1814,8 @@ class _TinyBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: isTablet ? 7 : 6, vertical: 3),
+      padding:
+      EdgeInsets.symmetric(horizontal: isTablet ? 7 : 6, vertical: 3),
       decoration: BoxDecoration(
         color: color.withOpacity(0.1),
         borderRadius: BorderRadius.circular(5),
@@ -1752,7 +1867,20 @@ class _PeriodPickerSheetState extends State<_PeriodPickerSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final months = const ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    final months = const [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
     final maxH = MediaQuery.of(context).size.height * 0.8;
 
     return DefaultTabController(
@@ -1760,7 +1888,8 @@ class _PeriodPickerSheetState extends State<_PeriodPickerSheet> {
       child: Container(
         constraints: BoxConstraints(maxHeight: maxH),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
+          // ⬅️ important: Expanded below needs max, not min
+          mainAxisSize: MainAxisSize.max,
           children: [
             // Header
             Padding(
@@ -1769,7 +1898,8 @@ class _PeriodPickerSheetState extends State<_PeriodPickerSheet> {
                 children: [
                   const Text(
                     'Select Period',
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+                    style:
+                    TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
                   ),
                   const Spacer(),
                   IconButton(
@@ -1822,7 +1952,12 @@ class _PeriodPickerSheetState extends State<_PeriodPickerSheet> {
                             ),
                             Expanded(
                               child: Center(
-                                child: Text('$_year', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                                child: Text(
+                                  '$_year',
+                                  style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w700),
+                                ),
                               ),
                             ),
                             IconButton(
@@ -1836,7 +1971,8 @@ class _PeriodPickerSheetState extends State<_PeriodPickerSheet> {
                         Expanded(
                           child: GridView.builder(
                             padding: const EdgeInsets.only(bottom: 16),
-                            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                            gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
                               crossAxisCount: 4,
                               mainAxisSpacing: 10,
                               crossAxisSpacing: 10,
@@ -1846,14 +1982,20 @@ class _PeriodPickerSheetState extends State<_PeriodPickerSheet> {
                             itemBuilder: (_, i) {
                               final monthIdx = i + 1;
                               return OutlinedButton(
-                                onPressed: () => widget.onPickMonth(_year, monthIdx),
+                                onPressed: () =>
+                                    widget.onPickMonth(_year, monthIdx),
                                 style: OutlinedButton.styleFrom(
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                  padding: const EdgeInsets.symmetric(vertical: 10),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius:
+                                      BorderRadius.circular(10)),
+                                  padding: const EdgeInsets.symmetric(
+                                      vertical: 10),
                                 ),
                                 child: Text(
                                   months[i],
-                                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 14),
                                 ),
                               );
                             },
@@ -1870,16 +2012,22 @@ class _PeriodPickerSheetState extends State<_PeriodPickerSheet> {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Text('Pick a custom date range', style: TextStyle(fontSize: 14, color: Colors.black54)),
+                          const Text('Pick a custom date range',
+                              style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.black54)),
                           const SizedBox(height: 12),
                           FilledButton.icon(
                             icon: const Icon(Icons.date_range),
                             label: const Text('Choose Date Range'),
                             onPressed: () async {
                               final now = DateTime.now();
-                              final first = DateTime(now.year - 3, 1, 1);
-                              final last = DateTime(now.year + 3, 12, 31);
-                              final picked = await showDateRangePicker(
+                              final first =
+                              DateTime(now.year - 3, 1, 1);
+                              final last =
+                              DateTime(now.year + 3, 12, 31);
+                              final picked =
+                              await showDateRangePicker(
                                 context: context,
                                 firstDate: first,
                                 lastDate: last,
@@ -1903,6 +2051,7 @@ class _PeriodPickerSheetState extends State<_PeriodPickerSheet> {
     );
   }
 }
+
 // --- END NEW WIDGET ---
 
 class _PickerSheet extends StatelessWidget {
@@ -1926,7 +2075,8 @@ class _PickerSheet extends StatelessWidget {
             maxHeight: MediaQuery.of(context).size.height * 0.6,
           ),
           child: Column(
-            mainAxisSize: MainAxisSize.min,
+            // ⬅️ use max to work with Expanded below, avoid slight overflow
+            mainAxisSize: MainAxisSize.max,
             children: [
               Padding(
                 padding: const EdgeInsets.all(16.0),
@@ -1950,14 +2100,15 @@ class _PickerSheet extends StatelessWidget {
                 ),
               ),
               const Divider(height: 1),
-              Flexible(
+              Expanded(
                 child: ListView.builder(
                   shrinkWrap: true,
                   itemCount: items.length,
                   itemBuilder: (context, index) {
                     final item = items[index];
                     return ListTile(
-                      title: Text(item, style: const TextStyle(fontSize: 14)),
+                      title: Text(item,
+                          style: const TextStyle(fontSize: 14)),
                       dense: true,
                       onTap: () {
                         onSelected(item);
@@ -2017,7 +2168,8 @@ String salesReportToCsv(
 
   // Rows
   for (final r in rows) {
-    final dateStr = r.invoiceDate != null ? dateFormat.format(r.invoiceDate!) : '';
+    final dateStr =
+    r.invoiceDate != null ? dateFormat.format(r.invoiceDate!) : '';
     String divisionText = (r.salesmanDivision ?? '').trim();
     if (divisionText.isNotEmpty && _isNumericLocal(divisionText)) {
       final id = int.tryParse(divisionText);
@@ -2059,7 +2211,8 @@ String salesReportToCsv(
 }
 
 String _csvEscape(String v) {
-  final needsQuotes = v.contains(',') || v.contains('"') || v.contains('\n');
+  final needsQuotes =
+      v.contains(',') || v.contains('"') || v.contains('\n');
   var out = v.replaceAll('"', '""');
-  return needsQuotes ? '"$out"' : out;
+  return needsQuotes ? '"$out"' : '"$out"';
 }
