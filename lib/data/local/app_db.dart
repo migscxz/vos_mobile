@@ -7,7 +7,7 @@ class AppDb {
 
   // Local DB is just a cache; sync_repository is the source of truth.
   // ✅ v35: Fix v_sales_report_itemized join (details join must not require order_id match)
-  static const _dbVersion = 35;
+  static const _dbVersion = 40;
 
   static Database? _instance;
 
@@ -409,6 +409,14 @@ class AppDb {
     await _createIndices(db);
     await _createSalesReportIndices(db);
     await _createItemizedIndices(db);
+
+    // ▶️ NEW: Stock Transfer cache (Approvals)
+    await _createStockTransferTables(db);
+    await _createStockTransferViews(db);
+    await _createStockTransferIndices(db);
+
+    await _createSyncOutboxTables(db);
+
   }
 
   static Future<void> _onUpgrade(Database db, int oldV, int newV) async {
@@ -455,13 +463,17 @@ class AppDb {
     }
 
     if (oldV < 4) {
-      await db.execute('ALTER TABLE sales_invoice ADD COLUMN payment_terms INTEGER;');
+      await db.execute(
+        'ALTER TABLE sales_invoice ADD COLUMN payment_terms INTEGER;',
+      );
       await db.execute('DROP VIEW IF EXISTS view_account_receivable;');
       await _createARView(db);
     }
 
     if (oldV < 5) {
-      await db.execute('ALTER TABLE sales_invoice ADD COLUMN is_posted INTEGER DEFAULT 0;');
+      await db.execute(
+        'ALTER TABLE sales_invoice ADD COLUMN is_posted INTEGER DEFAULT 0;',
+      );
       await db.execute('DROP VIEW IF EXISTS view_account_receivable;');
       await _createARView(db);
     }
@@ -588,9 +600,24 @@ class AppDb {
       await _safeAddColumn(db, 'sales_invoice', 'created_date', 'TEXT');
       await _safeAddColumn(db, 'sales_invoice', 'modified_by', 'INTEGER');
       await _safeAddColumn(db, 'sales_invoice', 'modified_date', 'TEXT');
-      await _safeAddColumn(db, 'sales_invoice', 'isReceipt', 'INTEGER DEFAULT 0');
-      await _safeAddColumn(db, 'sales_invoice', 'isDispatched', 'INTEGER DEFAULT 0');
-      await _safeAddColumn(db, 'sales_invoice', 'isRemitted', 'INTEGER DEFAULT 0');
+      await _safeAddColumn(
+        db,
+        'sales_invoice',
+        'isReceipt',
+        'INTEGER DEFAULT 0',
+      );
+      await _safeAddColumn(
+        db,
+        'sales_invoice',
+        'isDispatched',
+        'INTEGER DEFAULT 0',
+      );
+      await _safeAddColumn(
+        db,
+        'sales_invoice',
+        'isRemitted',
+        'INTEGER DEFAULT 0',
+      );
 
       await db.execute('DROP VIEW IF EXISTS v_sales_report;');
 
@@ -614,8 +641,12 @@ class AppDb {
       await db.execute('DROP VIEW IF EXISTS v_sales_report_itemized;');
       await _createSalesReportItemizedView(db);
 
-      await db.execute('CREATE INDEX IF NOT EXISTS idx_sisr_invoice_no ON sales_invoice_sales_return(invoice_no);');
-      await db.execute('CREATE INDEX IF NOT EXISTS idx_sisr_return_no ON sales_invoice_sales_return(return_no);');
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_sisr_invoice_no ON sales_invoice_sales_return(invoice_no);',
+      );
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_sisr_return_no ON sales_invoice_sales_return(return_no);',
+      );
     }
 
     if (oldV < 14) {
@@ -746,14 +777,18 @@ class AppDb {
     if (oldV < 20) {
       await db.execute('DROP VIEW IF EXISTS v_sales_report_itemized;');
       await _createSalesReportItemizedView(db);
-      await db.execute('CREATE INDEX IF NOT EXISTS idx_products_parent ON products(parent_id);');
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_products_parent ON products(parent_id);',
+      );
     }
 
     if (oldV < 21) {
       await db.execute('DROP VIEW IF EXISTS v_sales_report;');
       await db.execute('DROP VIEW IF EXISTS v_sales_report_itemized;');
       await _createSalesReportItemizedView(db);
-      await db.execute('CREATE INDEX IF NOT EXISTS idx_products_parent ON products(parent_id);');
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_products_parent ON products(parent_id);',
+      );
     }
 
     if (oldV < 22) {
@@ -766,7 +801,9 @@ class AppDb {
     }
 
     if (oldV < 23) {
-      await db.execute('CREATE TABLE IF NOT EXISTS _tmp_products AS SELECT * FROM products;');
+      await db.execute(
+        'CREATE TABLE IF NOT EXISTS _tmp_products AS SELECT * FROM products;',
+      );
       await db.execute('DROP TABLE IF EXISTS products;');
 
       await db.execute('''
@@ -815,9 +852,15 @@ class AppDb {
 
       await db.execute('DROP TABLE IF EXISTS _tmp_products;');
 
-      await db.execute('CREATE INDEX IF NOT EXISTS idx_products_parent ON products(parent_id);');
-      await db.execute('CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);');
-      await db.execute('CREATE INDEX IF NOT EXISTS idx_products_code ON products(product_code);');
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_products_parent ON products(parent_id);',
+      );
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);',
+      );
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_products_code ON products(product_code);',
+      );
 
       await db.execute('DROP VIEW IF EXISTS v_sales_report_itemized;');
       await _createSalesReportItemizedView(db);
@@ -840,8 +883,12 @@ class AppDb {
     if (oldV < 30) {
       await _safeAddColumn(db, 'divisions', 'id', 'INTEGER');
       await _safeAddColumn(db, 'divisions', 'name', 'TEXT');
-      await db.execute('UPDATE divisions SET id = division_id WHERE id IS NULL;');
-      await db.execute('UPDATE divisions SET name = division_name WHERE name IS NULL;');
+      await db.execute(
+        'UPDATE divisions SET id = division_id WHERE id IS NULL;',
+      );
+      await db.execute(
+        'UPDATE divisions SET name = division_name WHERE name IS NULL;',
+      );
       await _createCompatViews(db);
     }
 
@@ -877,6 +924,55 @@ class AppDb {
       await db.execute('DROP VIEW IF EXISTS v_sales_report_itemized_compat;');
       await _createCompatViews(db);
     }
+
+    // ✅ v36: Stock Transfer cache (Approvals)
+    if (oldV < 36) {
+      await _createStockTransferTables(db);
+      await _createStockTransferViews(db);
+      await _createStockTransferIndices(db);
+    }
+    // ✅ v37: Rebuild Stock Transfer cache schema/views for correctness
+  // ✅ v37: Rebuild Stock Transfer cache schema/views for correctness
+if (oldV < 37) {
+  // drop views first
+  await db.execute('DROP VIEW IF EXISTS v_stock_transfer_summary;');
+  await db.execute('DROP VIEW IF EXISTS v_stock_transfer_items;');
+  await db.execute('DROP VIEW IF EXISTS stock_transfer;');
+
+  // drop table (cache only; safe to rebuild)
+  await db.execute('DROP TABLE IF EXISTS stock_transfer_items;');
+
+  // recreate
+  await _createStockTransferTables(db);
+  await _createStockTransferViews(db);
+  await _createStockTransferIndices(db);
+}
+
+// ✅ v38: Persist boss approval overrides for stock transfer
+if (oldV < 38) {
+  await _safeAddColumn(db, 'stock_transfer_items', 'boss_status_override', 'TEXT');
+  await _safeAddColumn(db, 'stock_transfer_items', 'boss_action_at', 'TEXT');
+  await _safeAddColumn(db, 'stock_transfer_items', 'boss_action_by', 'TEXT');
+  await _safeAddColumn(db, 'stock_transfer_items', 'boss_rejected', 'INTEGER DEFAULT 0');
+  await _safeAddColumn(db, 'stock_transfer_items', 'boss_reject_reason', 'TEXT');
+
+  // If your views depend on status, rebuild them so they can use overrides later
+  await _createStockTransferViews(db);
+}
+
+// ✅ v39: Rebuild Stock Transfer views to include boss overrides + effective status
+if (oldV < 39) {
+  await db.execute('DROP VIEW IF EXISTS v_stock_transfer_summary;');
+  await db.execute('DROP VIEW IF EXISTS v_stock_transfer_items;');
+  await db.execute('DROP VIEW IF EXISTS stock_transfer;');
+
+  await _createStockTransferViews(db);
+}
+if (oldV < 40) {
+  await _createSyncOutboxTables(db);
+}
+
+
   }
 
   /* -------------------------------------------------------------------------- */
@@ -1565,58 +1661,148 @@ class AppDb {
 
   static Future<void> _createIndices(Database db) async {
     // Sales / AR side
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_si_invoice_date ON sales_invoice(invoice_date);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_sip_invoice_id ON sales_invoice_payments(invoice_id);');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_si_invoice_date ON sales_invoice(invoice_date);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_sip_invoice_id ON sales_invoice_payments(invoice_id);',
+    );
 
     // AP / Disbursement side
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_d_trx_date ON disbursement(transaction_date);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_d_payee ON disbursement(payee);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_dp_did ON disbursement_payables(disbursement_id);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_dp_coa ON disbursement_payables(coa_id);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_dpmts_did ON disbursement_payments(disbursement_id);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_dpmts_date ON disbursement_payments(date);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_coa_title ON chart_of_accounts(account_title);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_bank_name ON bank_accounts(bank_name);');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_d_trx_date ON disbursement(transaction_date);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_d_payee ON disbursement(payee);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_dp_did ON disbursement_payables(disbursement_id);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_dp_coa ON disbursement_payables(coa_id);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_dpmts_did ON disbursement_payments(disbursement_id);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_dpmts_date ON disbursement_payments(date);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_coa_title ON chart_of_accounts(account_title);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_bank_name ON bank_accounts(bank_name);',
+    );
 
     // Junction / itemized
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_sisr_invoice_no ON sales_invoice_sales_return(invoice_no);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_sisr_return_no ON sales_invoice_sales_return(return_no);');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_sisr_invoice_no ON sales_invoice_sales_return(invoice_no);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_sisr_return_no ON sales_invoice_sales_return(return_no);',
+    );
 
     // Products parent for supplier fallback
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_products_parent ON products(parent_id);');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_products_parent ON products(parent_id);',
+    );
 
     // Divisions / salesman mapping
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_divisions_name ON divisions(division_name);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_salesman_division ON salesman(division_id);');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_divisions_name ON divisions(division_name);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_salesman_division ON salesman(division_id);',
+    );
 
     // 🆕 Assets & Equipment filters (table name now matches sync)
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_assets_department ON assets_and_equipment(department);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_assets_condition  ON assets_and_equipment(condition);');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_assets_department ON assets_and_equipment(department);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_assets_condition  ON assets_and_equipment(condition);',
+    );
   }
 
   static Future<void> _createSalesReportIndices(Database db) async {
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_sr_order_invoice ON sales_return(order_id, invoice_no);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_si_order_invoice ON sales_invoice(order_id, invoice_no);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_si_salesman ON sales_invoice(salesman_id);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_si_branch ON sales_invoice(branch_id);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_si_dates ON sales_invoice(invoice_date, dispatch_date, due_date);');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_sr_order_invoice ON sales_return(order_id, invoice_no);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_si_order_invoice ON sales_invoice(order_id, invoice_no);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_si_salesman ON sales_invoice(salesman_id);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_si_branch ON sales_invoice(branch_id);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_si_dates ON sales_invoice(invoice_date, dispatch_date, due_date);',
+    );
   }
 
   static Future<void> _createItemizedIndices(Database db) async {
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_sid_order_invoice ON sales_invoice_details(order_id, invoice_no);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_sid_product ON sales_invoice_details(product_id);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_srd_return_no ON sales_return_details(return_no);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_srd_product ON sales_return_details(product_id);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_pps_product ON product_per_supplier(product_id);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_products_brand ON products(product_brand);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_products_category ON products(product_category);');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_sid_order_invoice ON sales_invoice_details(order_id, invoice_no);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_sid_product ON sales_invoice_details(product_id);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_srd_return_no ON sales_return_details(return_no);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_srd_product ON sales_return_details(product_id);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_pps_product ON product_per_supplier(product_id);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_products_brand ON products(product_brand);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_products_category ON products(product_category);',
+    );
   }
 
   /* -------------------------------------------------------------------------- */
   /*                                Helpers                                     */
   /* -------------------------------------------------------------------------- */
 
-  static Future<void> _safeAddColumn(Database db, String table, String col, String type) async {
+
+static Future<void> _createSyncOutboxTables(Database db) async {
+  await db.execute('''
+    CREATE TABLE IF NOT EXISTS sync_outbox (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      entity TEXT NOT NULL,        -- 'stock_transfer'
+      entity_key TEXT NOT NULL,    -- order_no
+      action TEXT NOT NULL,        -- 'PATCH_STATUS'
+      payload_json TEXT NOT NULL,  -- JSON string
+
+      status TEXT NOT NULL DEFAULT 'PENDING',  -- PENDING|SENDING|SENT|FAILED
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+
+      created_at TEXT NOT NULL,
+      sent_at TEXT
+    );
+  ''');
+
+  await db.execute('CREATE INDEX IF NOT EXISTS idx_outbox_status ON sync_outbox(status);');
+  await db.execute('CREATE INDEX IF NOT EXISTS idx_outbox_entity_key ON sync_outbox(entity, entity_key);');
+}
+
+
+
+
+
+  static Future<void> _safeAddColumn(
+    Database db,
+    String table,
+    String col,
+    String type,
+  ) async {
     final res = await db.rawQuery("PRAGMA table_info($table);");
     final exists = res.any((r) => (r['name'] as String?) == col);
     if (!exists) {
@@ -1625,8 +1811,12 @@ class AppDb {
   }
 
   static Future<void> _createPpsUniqueIndex(Database db) async {
-    await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS ux_pps_supplier_product ON product_per_supplier(supplier_id, product_id);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_pps_supplier ON product_per_supplier(supplier_id);');
+    await db.execute(
+      'CREATE UNIQUE INDEX IF NOT EXISTS ux_pps_supplier_product ON product_per_supplier(supplier_id, product_id);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_pps_supplier ON product_per_supplier(supplier_id);',
+    );
   }
 
   // ▶️ Divisions table (now includes compat columns)
@@ -1646,7 +1836,9 @@ class AppDb {
     ''');
     // Backfill compat columns on fresh create
     await db.execute('UPDATE divisions SET id = division_id WHERE id IS NULL;');
-    await db.execute('UPDATE divisions SET name = division_name WHERE name IS NULL;');
+    await db.execute(
+      'UPDATE divisions SET name = division_name WHERE name IS NULL;',
+    );
   }
 
   /* -------------------------------------------------------------------------- */
@@ -1669,12 +1861,14 @@ class AppDb {
 
     if (branchIds != null && branchIds.isNotEmpty) {
       final inList = branchIds.join(',');
-      branchFilterInIvJoin = '''
+      branchFilterInIvJoin =
+          '''
             LEFT JOIN v_running_inventory inv
               ON inv.product_id = p2.product_id
              AND inv.branch_id IN ($inList)
 ''';
-      histBranchFilter = '''
+      histBranchFilter =
+          '''
       AND si.branch_id IN ($inList)
 ''';
     } else {
@@ -1949,10 +2143,18 @@ ORDER BY fb.brand_name, fb.category_name, fb.product_name
       );
     ''');
 
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_assets_department ON assets_and_equipment(department);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_assets_condition  ON assets_and_equipment(condition);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_assets_employee   ON assets_and_equipment(employee);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_assets_item_id    ON assets_and_equipment(item_id);');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_assets_department ON assets_and_equipment(department);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_assets_condition  ON assets_and_equipment(condition);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_assets_employee   ON assets_and_equipment(employee);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_assets_item_id    ON assets_and_equipment(item_id);',
+    );
   }
 
   static Future<void> _createAssetsViews(Database db) async {
@@ -1981,5 +2183,231 @@ ORDER BY fb.brand_name, fb.category_name, fb.product_name
       a.date_created
     FROM assets_and_equipment a;
   ''');
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /*                 NEW: Stock Transfer cache (Approvals Module)               */
+  /* -------------------------------------------------------------------------- */
+
+ static Future<void> _createStockTransferTables(Database db) async {
+  await db.execute('''
+    CREATE TABLE IF NOT EXISTS stock_transfer_items (
+      id INTEGER PRIMARY KEY,
+      order_no TEXT NOT NULL,
+      product_id INTEGER,
+
+      ordered_quantity REAL,
+      received_quantity REAL,
+      amount REAL,
+
+      source_branch INTEGER,
+      target_branch INTEGER,
+
+      encoder_id INTEGER,
+      receiver_id INTEGER,
+
+      status TEXT,
+      remarks TEXT,
+
+      date_requested TEXT,
+      date_received TEXT,
+      lead_date TEXT,
+      date_encoded TEXT,
+
+      -- ✅ boss override fields (persist UI actions)
+      boss_status_override TEXT,
+      boss_action_at TEXT,
+      boss_action_by TEXT,
+      boss_rejected INTEGER DEFAULT 0,
+      boss_reject_reason TEXT
+    );
+  ''');
+}
+
+
+
+static Future<void> _createStockTransferViews(Database db) async {
+  // Expanded line-item view (joins names for UI) + boss fields + effective status
+  await db.execute('DROP VIEW IF EXISTS v_stock_transfer_items;');
+  await db.execute('''
+    CREATE VIEW v_stock_transfer_items AS
+    SELECT
+      sti.id,
+      TRIM(sti.order_no) AS order_no,
+
+      -- ✅ effective status: boss override wins when present
+      COALESCE(NULLIF(TRIM(sti.boss_status_override), ''), sti.status) AS status_effective,
+
+      sti.status AS status_raw,
+      sti.remarks,
+      sti.date_requested,
+      sti.date_received,
+      sti.lead_date,
+      sti.date_encoded,
+
+      sti.source_branch,
+      sb.branch_name AS source_branch_name,
+
+      sti.target_branch,
+      tb.branch_name AS target_branch_name,
+
+      sti.encoder_id,
+      (u.user_fname || ' ' || COALESCE(NULLIF(u.user_mname,''),'') || ' ' || u.user_lname) AS encoder_name,
+
+      sti.receiver_id,
+      (ur.user_fname || ' ' || COALESCE(NULLIF(ur.user_mname,''),'') || ' ' || ur.user_lname) AS receiver_name,
+
+      sti.product_id,
+      p.product_name AS product_name,
+
+      sti.ordered_quantity,
+      sti.received_quantity,
+      sti.amount,
+
+      -- ✅ boss fields
+      sti.boss_status_override,
+      sti.boss_action_at,
+      sti.boss_action_by,
+      COALESCE(sti.boss_rejected,0) AS boss_rejected,
+      sti.boss_reject_reason
+
+    FROM stock_transfer_items sti
+    LEFT JOIN products  p  ON p.product_id = sti.product_id
+    LEFT JOIN branches  sb ON sb.id = sti.source_branch
+    LEFT JOIN branches  tb ON tb.id = sti.target_branch
+    LEFT JOIN user      u  ON u.user_id = sti.encoder_id
+    LEFT JOIN user      ur ON ur.user_id = sti.receiver_id;
+  ''');
+
+  // Compatibility view for legacy queries expecting `stock_transfer`
+  await db.execute('DROP VIEW IF EXISTS stock_transfer;');
+  await db.execute('''
+    CREATE VIEW stock_transfer AS
+    SELECT
+      id,
+      order_no,
+      status,
+      remarks,
+      ordered_quantity,
+      received_quantity,
+      date_requested,
+      date_encoded,
+      product_id,
+      source_branch,
+      target_branch,
+      encoder_id
+    FROM stock_transfer_items;
+  ''');
+
+  // Summary view (one row per order_no)
+  // ✅ Uses status_effective so boss approvals reflect immediately
+  await db.execute('DROP VIEW IF EXISTS v_stock_transfer_summary;');
+  await db.execute('''
+    CREATE VIEW v_stock_transfer_summary AS
+    WITH ranked AS (
+      SELECT
+        sti.*,
+
+        COALESCE(NULLIF(TRIM(sti.boss_status_override), ''), sti.status) AS status_effective,
+
+        CASE
+          WHEN REPLACE(REPLACE(LOWER(TRIM(COALESCE(NULLIF(TRIM(sti.boss_status_override), ''), sti.status))), '_', ''), ' ', '') = 'requested'   THEN 1
+          WHEN REPLACE(REPLACE(LOWER(TRIM(COALESCE(NULLIF(TRIM(sti.boss_status_override), ''), sti.status))), '_', ''), ' ', '') = 'forpicking' THEN 2
+          WHEN REPLACE(REPLACE(LOWER(TRIM(COALESCE(NULLIF(TRIM(sti.boss_status_override), ''), sti.status))), '_', ''), ' ', '') = 'picking'    THEN 3
+          WHEN REPLACE(REPLACE(LOWER(TRIM(COALESCE(NULLIF(TRIM(sti.boss_status_override), ''), sti.status))), '_', ''), ' ', '') = 'picked'     THEN 4
+          WHEN REPLACE(REPLACE(LOWER(TRIM(COALESCE(NULLIF(TRIM(sti.boss_status_override), ''), sti.status))), '_', ''), ' ', '') = 'forloading' THEN 5
+          WHEN REPLACE(REPLACE(LOWER(TRIM(COALESCE(NULLIF(TRIM(sti.boss_status_override), ''), sti.status))), '_', ''), ' ', '') = 'received'   THEN 6
+          ELSE 0
+        END AS status_rank
+      FROM stock_transfer_items sti
+    )
+    SELECT
+      MIN(r.id) AS id,
+      TRIM(r.order_no) AS order_no,
+
+      MIN(r.date_requested) AS date_requested,
+      MAX(r.date_encoded)   AS date_encoded,
+      MAX(r.date_received)  AS date_received,
+      MAX(r.lead_date)      AS lead_date,
+
+      r.source_branch,
+      sb.branch_name AS source_branch_name,
+
+      r.target_branch,
+      tb.branch_name AS target_branch_name,
+
+      MIN(r.encoder_id) AS encoder_id,
+      (u.user_fname || ' ' || COALESCE(NULLIF(u.user_mname,''),'') || ' ' || u.user_lname) AS encoder_name,
+
+      MIN(r.receiver_id) AS receiver_id,
+      (ur.user_fname || ' ' || COALESCE(NULLIF(ur.user_mname,''),'') || ' ' || ur.user_lname) AS receiver_name,
+
+      SUM(COALESCE(r.ordered_quantity,0))  AS ordered_qty_total,
+      SUM(COALESCE(r.received_quantity,0)) AS received_qty_total,
+
+      (
+        SELECT rr.remarks
+        FROM ranked rr
+        WHERE TRIM(rr.order_no) = TRIM(r.order_no)
+          AND TRIM(COALESCE(rr.remarks,'')) <> ''
+        ORDER BY rr.id ASC
+        LIMIT 1
+      ) AS remarks,
+
+      (
+        SELECT rr.status_effective
+        FROM ranked rr
+        WHERE TRIM(rr.order_no) = TRIM(r.order_no)
+        ORDER BY rr.status_rank DESC, rr.id DESC
+        LIMIT 1
+      ) AS status_effective,
+
+      -- ✅ boss aggregation
+      MAX(r.boss_action_at) AS boss_action_at,
+      MAX(r.boss_action_by) AS boss_action_by,
+      MAX(COALESCE(r.boss_rejected,0)) AS boss_rejected,
+      (
+        SELECT rr.boss_reject_reason
+        FROM ranked rr
+        WHERE TRIM(rr.order_no) = TRIM(r.order_no)
+          AND COALESCE(rr.boss_rejected,0) = 1
+          AND TRIM(COALESCE(rr.boss_reject_reason,'')) <> ''
+        ORDER BY rr.id DESC
+        LIMIT 1
+      ) AS boss_reject_reason
+
+    FROM ranked r
+    LEFT JOIN branches sb ON sb.id = r.source_branch
+    LEFT JOIN branches tb ON tb.id = r.target_branch
+    LEFT JOIN user     u  ON u.user_id = r.encoder_id
+    LEFT JOIN user     ur ON ur.user_id = r.receiver_id
+    GROUP BY TRIM(r.order_no), r.source_branch, r.target_branch;
+  ''');
+}
+
+
+
+  static Future<void> _createStockTransferIndices(Database db) async {
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_sti_order_no ON stock_transfer_items(order_no);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_sti_status ON stock_transfer_items(status);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_sti_date_requested ON stock_transfer_items(date_requested);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_sti_source_branch ON stock_transfer_items(source_branch);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_sti_target_branch ON stock_transfer_items(target_branch);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_sti_product_id ON stock_transfer_items(product_id);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_sti_encoder_id ON stock_transfer_items(encoder_id);',
+    );
   }
 }

@@ -49,6 +49,23 @@ class SyncRepository {
 
   /// Ensures we never mix data from two different servers.
   /// If the base URL changed, wipe local tables once.
+  /// 
+  /// 
+  /// 
+  /// 
+  /// 
+  Future<void> _ensureProductClassificationTable(DatabaseExecutor exec) async {
+  await exec.execute('''
+    CREATE TABLE IF NOT EXISTS product_classification (
+      product_id INTEGER PRIMARY KEY,
+      abc_class TEXT,
+      abc_class_forecast TEXT,
+      abc_class_sold TEXT,
+      forecast_multiplier REAL
+    )
+  ''');
+}
+
   Future<void> _resetIfServerBaseChanged() async {
     final db = await _db;
     await db.execute('''
@@ -135,6 +152,12 @@ class SyncRepository {
       'disbursement_payments',
       'disbursement_payables',
       'disbursement',
+ // ADD THIS (since you sync it)
+  'product_classification',
+      // Stock Transfer
+'stock_transfer_local',
+
+
     ];
 
     final batch = db.batch();
@@ -301,6 +324,9 @@ class SyncRepository {
       syncDisbursement(purge: purge),
       syncDisbursementPayables(purge: purge),
       syncDisbursementPayments(purge: purge),
+      // Stock Transfer 
+      syncStockTransfer(purge: purge),
+
     ]);
   }
 
@@ -361,42 +387,182 @@ class SyncRepository {
       _SyncTask('Disbursement Headers', () => syncDisbursement(purge: purge)),
       _SyncTask('Disbursement Payables', () => syncDisbursementPayables(purge: purge)),
       _SyncTask('Disbursement Payments', () => syncDisbursementPayments(purge: purge)),
+
+      // Stock Transfer
+_SyncTask('Stock Transfer', () => syncStockTransfer(purge: purge)),
+
     ];
   }
 
-  /// /items/product_classification?limit=-1
-  Future<void> syncProductClassification({bool purge = false}) async {
-    final db = await _db;
 
-    final rows = await api.getList('/items/product_classification?limit=-1');
-    final batch = db.batch();
+
+
+Future<void> syncStockTransfer({bool purge = false}) async {
+  final db = await _db;
+
+  await _ensureStockTransferLocalTable(db);
+
+  final rows = await api.getList('/items/stock_transfer?limit=-1');
+
+  final allowedCols = await _getTableColumns(db, 'stock_transfer_local');
+
+  await db.transaction((txn) async {
+    final batch = txn.batch();
 
     for (final r in rows) {
+      final payload = <String, Object?>{
+        'id': _asIntNullable(r['id']),
+        'order_no': _asStringNullable(r['order_no']),
+        'product_id': _asIntNullable(r['product_id']),
+        'ordered_quantity': _asDouble(r['ordered_quantity']),
+        'received_quantity': _asDouble(r['received_quantity']),
+        'source_branch': _asIntNullable(r['source_branch']),
+        'target_branch': _asIntNullable(r['target_branch']),
+        'status': _asStringNullable(r['status']),
+        'remarks': _asStringNullable(r['remarks']),
+        'amount': _asDouble(r['amount']),
+        'encoder_id': _asIntNullable(r['encoder_id']),
+        'receiver_id': _asIntNullable(r['receiver_id']),
+        'date_requested': _asStringNullable(r['date_requested']),
+        'date_received': _asStringNullable(r['date_received']),
+        'date_encoded': _asStringNullable(r['date_encoded']),
+        'lead_date': _asStringNullable(r['lead_date']),
+      };
+
+      payload.removeWhere((k, _) => !allowedCols.contains(k));
+
       batch.insert(
-        'product_classification',
-        {
-          // PK is product_id (no "id" column in your table)
-          'product_id': _asIntNullable(r['product_id']),
-          'abc_class': _asStringNullable(r['abc_class']),
-          'abc_class_forecast': _asStringNullable(r['abc_class_forecast']),
-          'abc_class_sold': _asStringNullable(r['abc_class_sold']),
-          // API sends this as string ("1.20") so parse to REAL
-          'forecast_multiplier': _asDouble(r['forecast_multiplier']),
-        },
+        'stock_transfer_local',
+        payload,
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     }
 
     await batch.commit(noResult: true);
+  });
 
-    if (purge) {
-      await _purgeNotIn(
-        table: 'product_classification',
-        pk: 'product_id', // 👈 primary key in SQLite
-        remoteIds: rows.map((e) => e['product_id']),
-      );
-    }
+  if (purge) {
+    await _purgeNotIn(
+      table: 'stock_transfer_local',
+      pk: 'id',
+      remoteIds: rows.map((e) => e['id']),
+    );
   }
+}
+
+
+
+Future<void> _ensureStockTransferLocalTable(DatabaseExecutor exec) async {
+  await exec.execute('''
+    CREATE TABLE IF NOT EXISTS stock_transfer_local (
+      id INTEGER PRIMARY KEY,
+      order_no TEXT,
+      product_id INTEGER,
+      ordered_quantity REAL,
+      received_quantity REAL,
+      source_branch INTEGER,
+      target_branch INTEGER,
+      status TEXT,
+      remarks TEXT,
+      amount REAL,
+      encoder_id INTEGER,
+      receiver_id INTEGER,
+      date_requested TEXT,
+      date_received TEXT,
+      date_encoded TEXT,
+      lead_date TEXT,
+
+      -- Boss offline approval fields
+      boss_status_override TEXT,
+      boss_action_at TEXT,
+      boss_action_by TEXT,
+      boss_rejected INTEGER DEFAULT 0,
+      boss_reject_reason TEXT,
+
+      -- Upload tracking
+      boss_synced INTEGER DEFAULT 0,
+      boss_sync_error TEXT
+    )
+  ''');
+}
+
+Future<void> _ensureStockTransferBossColumnsLocal(DatabaseExecutor exec) async {
+  final info = await exec.rawQuery("PRAGMA table_info(stock_transfer_local)");
+  final cols = info.map((e) => (e["name"]?.toString() ?? "")).toSet();
+
+  Future<void> addCol(String name, String type, {String? defaultSql}) async {
+    if (cols.contains(name)) return;
+    final def = (defaultSql != null && defaultSql.trim().isNotEmpty)
+        ? " DEFAULT $defaultSql"
+        : "";
+    await exec.execute("ALTER TABLE stock_transfer_local ADD COLUMN $name $type$def");
+  }
+
+  await addCol("boss_status_override", "TEXT");
+  await addCol("boss_action_at", "TEXT");
+  await addCol("boss_action_by", "TEXT");
+  await addCol("boss_rejected", "INTEGER", defaultSql: "0");
+  await addCol("boss_reject_reason", "TEXT");
+  await addCol("boss_synced", "INTEGER", defaultSql: "0");
+  await addCol("boss_sync_error", "TEXT");
+}
+
+
+Future<Set<String>> _getTableColumns(DatabaseExecutor exec, String table) async {
+  final rows = await exec.rawQuery('PRAGMA table_info($table)');
+  return rows
+      .map((e) => e['name']?.toString() ?? '')
+      .where((s) => s.isNotEmpty)
+      .toSet();
+}
+
+
+
+
+
+// /// Returns the set of columns existing in a SQLite table.
+// Future<Set<String>> _getTableColumns(DatabaseExecutor exec, String table) async {
+//   final rows = await exec.rawQuery('PRAGMA table_info($table)');
+//   return rows
+//       .map((e) => e['name']?.toString() ?? '')
+//       .where((s) => s.isNotEmpty)
+//       .toSet();
+// }
+
+
+
+  Future<void> syncProductClassification({bool purge = false}) async {
+  final db = await _db;
+
+  await _ensureProductClassificationTable(db);
+
+  final rows = await api.getList('/items/product_classification?limit=-1');
+  final batch = db.batch();
+
+  for (final r in rows) {
+    batch.insert(
+      'product_classification',
+      {
+        'product_id': _asIntNullable(r['product_id']),
+        'abc_class': _asStringNullable(r['abc_class']),
+        'abc_class_forecast': _asStringNullable(r['abc_class_forecast']),
+        'abc_class_sold': _asStringNullable(r['abc_class_sold']),
+        'forecast_multiplier': _asDouble(r['forecast_multiplier']),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  await batch.commit(noResult: true);
+
+  if (purge) {
+    await _purgeNotIn(
+      table: 'product_classification',
+      pk: 'product_id',
+      remoteIds: rows.map((e) => e['product_id']),
+    );
+  }
+}
 
   Future<List<SyncTaskError>> syncAllWithProgress({
     bool purge = false,

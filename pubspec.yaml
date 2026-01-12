@@ -30,6 +30,11 @@ dependencies:
   docx_template: ^0.4.0
   fl_chart: ^0.69.0
   getwidget: ^7.0.0
+  connectivity_plus: ^6.0.0
+  flutter_secure_storage: ^9.0.0
+  crypto: ^3.0.3
+
+  
 
 
 
