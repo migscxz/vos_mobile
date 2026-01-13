@@ -1,4 +1,5 @@
 import "dart:convert";
+import "package:crypto/crypto.dart";
 import "package:shared_preferences/shared_preferences.dart";
 
 class CachedUser {
@@ -36,6 +37,36 @@ class CachedUser {
 class AuthStorage {
   static const _kUserId = "auth.current_user_id";
   static const _kCachedUsers = "auth.cached_users";
+
+  // ---- Seeder: offline default account ----
+  static const int _seedUserId = 207;
+  static const String _seedEmail = "norman_delfin@men2corp.com";
+  static const String _seedPassword = "delfin123";
+  static const String _seedFname = "Norman";
+  static const String _seedLname = "Delfin";
+
+  static String hashPassword(String plain) {
+    final bytes = utf8.encode(plain);
+    return sha256.convert(bytes).toString();
+  }
+
+  Future<void> seedOfflineUserIfMissing() async {
+    final list = await readCachedUsers();
+    final seedEmailLower = _seedEmail.trim().toLowerCase();
+
+    final exists = list.any((u) => u.email.trim().toLowerCase() == seedEmailLower);
+    if (exists) return;
+
+    final seeded = CachedUser(
+      userId: _seedUserId,
+      email: _seedEmail,
+      passwordHash: hashPassword(_seedPassword),
+      fname: _seedFname,
+      lname: _seedLname,
+    );
+
+    await upsertCachedUser(seeded);
+  }
 
   Future<void> saveUserId(int userId) async {
     final sp = await SharedPreferences.getInstance();
@@ -89,8 +120,9 @@ class AuthStorage {
   Future<void> clearAll() async {
     final sp = await SharedPreferences.getInstance();
     await sp.remove(_kUserId);
-    // NOTE: keep cached users if you want offline login after logout.
-    // If you want logout to remove offline login too, uncomment next line:
+
+    // NOTE: keep cached users to allow offline login after logout.
+    // If you want logout to remove offline login too, uncomment:
     // await sp.remove(_kCachedUsers);
   }
 }

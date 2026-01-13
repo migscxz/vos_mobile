@@ -25,7 +25,7 @@ class ContentArea extends ConsumerWidget {
       case Module.chats:
         return const ChatView();
       case Module.approvals:
-        return const ApprovalView();
+        return ApprovalView();
       case Module.profile:
         return const ProfileView();
     }

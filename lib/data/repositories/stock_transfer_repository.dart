@@ -448,6 +448,46 @@ class StockTransferRepository {
     } catch (_) {}
   }
 
+
+    /// Count "Requested" Stock Transfers by header (order_no).
+  /// A header is counted only if ALL its line rows are in Requested status.
+  Future<int> fetchRequestedHeaderCount() async {
+    final json = await _api.getJson(
+      "/items/$_stCollection",
+      query: {
+        "limit": "-1",
+        "fields": "id,order_no,status",
+        "sort": "-date_encoded",
+      },
+    );
+
+    final List data = (json["data"] as List?) ?? const [];
+
+    // order_no -> list of statuses
+    final Map<String, List<String>> statusesByOrder = {};
+
+    for (final item in data) {
+      if (item is! Map) continue;
+      final m = item.cast<String, dynamic>();
+
+      final orderNo = (m["order_no"]?.toString() ?? "").trim();
+      if (orderNo.isEmpty) continue;
+
+      final status = (m["status"]?.toString() ?? "").trim().toLowerCase();
+      (statusesByOrder[orderNo] ??= []).add(status);
+    }
+
+    int count = 0;
+    statusesByOrder.forEach((orderNo, statuses) {
+      if (statuses.isEmpty) return;
+      final allRequested = statuses.every((s) => s.replaceAll(" ", "") == "requested");
+      if (allRequested) count++;
+    });
+
+    return count;
+  }
+
+
   Future<void> _safeDeleteConsolidatorDetails(int consolidatorId) async {
     final res = await _api.getJson(
       "/items/consolidator_details",

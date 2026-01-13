@@ -1,6 +1,5 @@
 // lib/modules/approvals/stock_transfer/stock_transfer_view.dart
 import "dart:async";
-
 import "package:flutter/material.dart";
 import "package:connectivity_plus/connectivity_plus.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
@@ -8,6 +7,9 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../../../app.dart"; // apiClientProvider, authRepositoryProvider
 import "../../../core/network/api_client.dart";
 import "../../../data/repositories/stock_transfer_repository.dart";
+
+import "stock_transfer_models.dart";
+import "stock_transfer_sheet.dart";
 
 class StockTransferView extends ConsumerStatefulWidget {
   const StockTransferView({super.key});
@@ -20,7 +22,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
   final TextEditingController _searchCtrl = TextEditingController();
   Timer? _debounce;
 
-  StockTransferStatus _selectedStatus = StockTransferStatus.all;
+  StockTransferFilter _selectedFilter = StockTransferFilter.all;
   String _query = "";
 
   late final ApiClient _api;
@@ -34,6 +36,9 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
   StreamSubscription<dynamic>? _connSub;
 
   List<StockTransferRow> _lines = const [];
+
+  // cached headers
+  List<StockTransferHeader> _headers = const [];
 
   // -------------------------
   // CONNECTIVITY
@@ -100,8 +105,6 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
   @override
   void initState() {
     super.initState();
-
-    // Use the SAME ApiClient instance from Riverpod
     _api = ref.read(apiClientProvider);
     _repo = StockTransferRepository(_api);
 
@@ -119,7 +122,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
 
   void _onSearchChanged(String value) {
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 280), () {
+    _debounce = Timer(const Duration(milliseconds: 320), () {
       if (!mounted) return;
       setState(() => _query = value.trim());
     });
@@ -154,7 +157,6 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
         if (enc != null) userIds.add(enc);
       }
 
-      // Fetch lookup data
       final products = await _repo.fetchProductsByIds(productIds);
       final branches = await _repo.fetchBranchesByIds(branchIds);
       final users = await _repo.fetchUsersByIds(userIds);
@@ -178,8 +180,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
         final uid = _asInt(u["user_id"]);
         if (uid == null) continue;
 
-        final isDeleted = _truthyDeleted(u["is_deleted"]);
-        if (isDeleted) continue;
+        if (truthyDeleted(u["is_deleted"])) continue;
 
         final fn = (u["user_fname"]?.toString() ?? "").trim();
         final ln = (u["user_lname"]?.toString() ?? "").trim();
@@ -234,9 +235,12 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
         );
       }).toList();
 
+      final headers = _buildHeaders(lines);
+
       if (!mounted) return;
       setState(() {
         _lines = lines;
+        _headers = headers;
         _loading = false;
       });
     } catch (e) {
@@ -248,31 +252,11 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
     }
   }
 
-  bool _truthyDeleted(Object? v) {
-    if (v == null) return false;
-    if (v is bool) return v;
-    if (v is num) return v != 0;
-
-    // handle: { type: "Buffer", data: [1] }
-    if (v is Map) {
-      final data = v["data"];
-      if (data is List && data.isNotEmpty) {
-        final first = data.first;
-        if (first is num) return first != 0;
-        final parsed = int.tryParse(first.toString());
-        if (parsed != null) return parsed != 0;
-      }
-    }
-
-    final s = v.toString().trim().toLowerCase();
-    return s == "1" || s == "true" || s == "yes";
-  }
-
   // Consolidate raw line rows into header groups by orderNo
   List<StockTransferHeader> _buildHeaders(List<StockTransferRow> rows) {
     final map = <String, List<StockTransferRow>>{};
     for (final r in rows) {
-      final key = r.orderNo.trim().isEmpty ? 'ST-${r.id}' : r.orderNo.trim();
+      final key = r.orderNo.trim().isEmpty ? "ST-${r.id}" : r.orderNo.trim();
       (map[key] ??= []).add(r);
     }
 
@@ -327,19 +311,19 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
     return StockTransferStatus.mixed;
   }
 
-  bool _headerMatchesStatus(StockTransferHeader h, StockTransferStatus filter) {
-    if (filter == StockTransferStatus.all) return true;
+  bool _matchesFilter(StockTransferHeader h) {
+    final f = _selectedFilter;
+    if (f == StockTransferFilter.all) return true;
 
+    // if header is mixed, match if any item matches chosen status
     if (h.statusEnum == StockTransferStatus.mixed) {
-      return h.items.any((e) => e.statusEnum == filter);
+      return h.items.any((e) => e.statusEnum == f.status);
     }
-
-    return h.statusEnum == filter;
+    return h.statusEnum == f.status;
   }
 
-  bool _headerMatchesQuery(StockTransferHeader h, String qLower) {
+  bool _matchesQuery(StockTransferHeader h, String qLower) {
     if (qLower.isEmpty) return true;
-
     final hay = <String>[
       h.orderNo,
       h.requesterName,
@@ -347,7 +331,6 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
       h.targetBranchName,
       ...h.items.map((e) => e.productName),
     ].join(" ").toLowerCase();
-
     return hay.contains(qLower);
   }
 
@@ -357,84 +340,45 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
       return;
     }
 
-    // Boss can only act if ALL items are Requested
-    final allRequested =
-        header.items.isNotEmpty &&
-        header.items.every((e) => e.statusEnum == StockTransferStatus.requested);
+    if (!header.allRequested) return;
 
-    if (!allRequested) return;
-
-    final result = await showModalBottomSheet<_ApprovalAction?>(
+    final outcome = await showModalBottomSheet<StockTransferApproveOutcome?>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _RequestedApprovalSheet(header: header),
+      builder: (_) => StockTransferApprovalSheet(header: header),
     );
 
-    if (result == null) return;
-
-    if (result.type == _ApprovalActionType.reject) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Reject is not implemented yet (online-only).")),
-      );
-      return;
-    }
+    if (outcome == null) return;
 
     if (_syncing) return;
     setState(() => _syncing = true);
 
     try {
-      // createdBy must be a valid /items/user.user_id
-      final createdBy = await ref.read(authRepositoryProvider).getCurrentAppUserId();
-
-      if (createdBy == null) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("No user session found (user_id missing). Please login again."),
-          ),
-        );
-        return;
-      }
-
-      final approveRes = await _repo.approveStockTransferAndCreateCldtst(
-        stockTransferNo: header.orderNo,
-        createdBy: createdBy,
-      );
-
-      if (!mounted) return;
-
       await _loadFromServer();
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            "Approved. Created ${approveRes.consolidatorNo ?? "CLDTST"} (ID: ${approveRes.consolidatorId}).",
+            "Approved. Created ${outcome.consolidatorNo ?? "CLDTST"} (ID: ${outcome.consolidatorId}).",
           ),
         ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Approve failed: $e")),
       );
     } finally {
       if (mounted) setState(() => _syncing = false);
     }
   }
 
-  void _showFilterMenu() async {
-    final selected = await showModalBottomSheet<StockTransferStatus>(
+  Future<void> _showFilterMenu() async {
+    final selected = await showModalBottomSheet<StockTransferFilter>(
       context: context,
       useSafeArea: true,
       showDragHandle: true,
       builder: (ctx) {
         final cs = Theme.of(ctx).colorScheme;
-        final visibleStatuses = StockTransferStatus.values
-            .where((s) => s != StockTransferStatus.mixed)
-            .toList();
+        final visible = StockTransferFilter.values.toList();
 
         return Material(
           color: cs.surface,
@@ -448,20 +392,18 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
                   style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
                 ),
               ),
-              ...visibleStatuses.map((s) {
-                final isSelected = s == _selectedStatus;
+              ...visible.map((f) {
+                final isSelected = f == _selectedFilter;
                 return ListTile(
                   leading: Icon(
                     isSelected ? Icons.check_circle_rounded : Icons.circle_outlined,
                     color: isSelected ? cs.primary : cs.onSurfaceVariant,
                   ),
                   title: Text(
-                    s.label,
-                    style: TextStyle(
-                      fontWeight: isSelected ? FontWeight.w900 : FontWeight.w700,
-                    ),
+                    f.label,
+                    style: TextStyle(fontWeight: isSelected ? FontWeight.w900 : FontWeight.w700),
                   ),
-                  onTap: () => Navigator.pop(ctx, s),
+                  onTap: () => Navigator.pop(ctx, f),
                 );
               }),
               const SizedBox(height: 12),
@@ -472,7 +414,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
     );
 
     if (selected == null) return;
-    setState(() => _selectedStatus = selected);
+    setState(() => _selectedFilter = selected);
   }
 
   @override
@@ -480,23 +422,15 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
 
-    final headers = _buildHeaders(_lines);
-    final qLower = _query.toLowerCase();
+    final qLower = _query.trim().toLowerCase();
+    final filtered = _headers.where((h) {
+      final mq = _matchesQuery(h, qLower);
+      final mf = _matchesFilter(h);
 
-    final filtered = headers.where((h) {
-      final matchesQuery = _headerMatchesQuery(h, qLower);
-      final matchesStatus = _headerMatchesStatus(h, _selectedStatus);
-
-      if (_query.isNotEmpty) return matchesQuery;
-      return matchesStatus;
+      // Sales Order behavior: when searching, show search results regardless of filter
+      if (_query.trim().isNotEmpty) return mq;
+      return mf;
     }).toList();
-
-    final groups = <String, List<StockTransferHeader>>{};
-    for (final h in filtered) {
-      final key = _fmtYmd(h.requestedAt);
-      (groups[key] ??= []).add(h);
-    }
-    final groupKeys = groups.keys.toList()..sort((a, b) => b.compareTo(a));
 
     return Scaffold(
       backgroundColor: cs.surfaceContainerLowest,
@@ -504,14 +438,8 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
         title: const Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              "Stock Transfers",
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-            ),
-            Text(
-              "Approvals",
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.normal),
-            ),
+            Text("Stock Transfers", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
+            Text("Approval Queue", style: TextStyle(fontSize: 12)),
           ],
         ),
         actions: [
@@ -519,11 +447,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
           if (_syncing)
             const Padding(
               padding: EdgeInsets.only(right: 12),
-              child: SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
+              child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
             ),
         ],
       ),
@@ -563,7 +487,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
                         Icon(Icons.filter_alt_rounded, size: 16, color: cs.onSurfaceVariant),
                         const SizedBox(width: 6),
                         Text(
-                          _query.isNotEmpty ? "Search Results" : _selectedStatus.label,
+                          _query.trim().isNotEmpty ? "Search Results" : _selectedFilter.label,
                           style: theme.textTheme.labelLarge?.copyWith(
                             fontWeight: FontWeight.w900,
                             color: cs.onSurface,
@@ -577,7 +501,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
                 ),
                 const Spacer(),
                 Text(
-                  "${filtered.length} transfers",
+                  "${filtered.length} transfer(s)",
                   style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
                 ),
               ],
@@ -595,14 +519,17 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
                             ? ListView(children: [_EmptyState(query: _query)])
                             : ListView.builder(
                                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                                itemCount: groupKeys.length,
-                                itemBuilder: (context, gi) {
-                                  final dateKey = groupKeys[gi];
-                                  final rows = groups[dateKey]!;
-                                  return _DateGroup(
-                                    dateKey: dateKey,
-                                    rows: rows,
-                                    onTapRow: (header) => _openApprovalModal(header),
+                                itemCount: filtered.length,
+                                itemBuilder: (context, i) {
+                                  final h = filtered[i];
+                                  final enabled = _isOnline && h.allRequested;
+                                  return Padding(
+                                    padding: const EdgeInsets.only(bottom: 12),
+                                    child: _StockTransferCard(
+                                      header: h,
+                                      enabled: enabled,
+                                      onTap: () => _openApprovalModal(h),
+                                    ),
                                   );
                                 },
                               ),
@@ -614,17 +541,16 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
   }
 
   StockTransferStatus _parseStatus(String? raw) {
-    final s = (raw ?? '').trim().toLowerCase();
-    final norm = s.replaceAll('_', '').replaceAll(' ', '');
-
+    final s = (raw ?? "").trim().toLowerCase();
+    final norm = s.replaceAll("_", "").replaceAll(" ", "");
     if (norm.isEmpty) return StockTransferStatus.requested;
 
-    if (norm == 'requested') return StockTransferStatus.requested;
-    if (norm == 'forpicking') return StockTransferStatus.forPicking;
-    if (norm == 'picking') return StockTransferStatus.picking;
-    if (norm == 'picked') return StockTransferStatus.picked;
-    if (norm == 'forloading') return StockTransferStatus.forLoading;
-    if (norm == 'received') return StockTransferStatus.received;
+    if (norm == "requested") return StockTransferStatus.requested;
+    if (norm == "forpicking") return StockTransferStatus.forPicking;
+    if (norm == "picking") return StockTransferStatus.picking;
+    if (norm == "picked") return StockTransferStatus.picked;
+    if (norm == "forloading") return StockTransferStatus.forLoading;
+    if (norm == "received") return StockTransferStatus.received;
 
     return StockTransferStatus.requested;
   }
@@ -645,206 +571,139 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
 }
 
 // ------------------------------
-// UI: DATE GROUP (HEADERS)
+// UI: STOCK TRANSFER CARD (Sales-Order style)
 // ------------------------------
 
-class _DateGroup extends StatelessWidget {
-  final String dateKey;
-  final List<StockTransferHeader> rows;
-  final ValueChanged<StockTransferHeader> onTapRow;
-
-  const _DateGroup({
-    required this.dateKey,
-    required this.rows,
-    required this.onTapRow,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8, top: 10),
-          child: Text(
-            dateKey,
-            style: TextStyle(
-              fontWeight: FontWeight.w900,
-              color: cs.onSurfaceVariant,
-            ),
-          ),
-        ),
-        ...rows.map(
-          (h) => Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: _BossStockHeaderCard(header: h, onTap: () => onTapRow(h)),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-// ------------------------------
-// UI: HEADER CARD
-// ------------------------------
-
-class _BossStockHeaderCard extends StatelessWidget {
+class _StockTransferCard extends StatelessWidget {
   final StockTransferHeader header;
+  final bool enabled;
   final VoidCallback onTap;
 
-  const _BossStockHeaderCard({required this.header, required this.onTap});
+  const _StockTransferCard({
+    required this.header,
+    required this.enabled,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
 
-    final statusColor = _statusColor(header.statusEnum, cs);
-
-    final allRequested =
-        header.items.isNotEmpty &&
-        header.items.every((e) => e.statusEnum == StockTransferStatus.requested);
+    final statusColor = stockTransferStatusColor(header.statusEnum, cs);
 
     return InkWell(
-      onTap: allRequested ? onTap : null,
-      borderRadius: BorderRadius.circular(12),
+      onTap: enabled ? onTap : null,
+      borderRadius: BorderRadius.circular(14),
       child: Container(
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: cs.surface,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: cs.outlineVariant.withOpacity(0.4)),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: cs.outlineVariant.withOpacity(0.45)),
         ),
-        child: IntrinsicHeight(
-          child: Row(
-            children: [
-              Container(
-                width: 5,
-                decoration: BoxDecoration(
-                  color: statusColor,
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(12),
-                    bottomLeft: Radius.circular(12),
-                  ),
-                ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: cs.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: cs.outlineVariant.withOpacity(0.45)),
               ),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+              child: Icon(Icons.swap_horiz_rounded, color: cs.primary),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
                     children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              header.orderNo,
-                              style: const TextStyle(
-                                fontFamily: "monospace",
-                                fontWeight: FontWeight.w900,
-                                fontSize: 15,
-                              ),
-                            ),
+                      Expanded(
+                        child: Text(
+                          header.orderNo,
+                          style: const TextStyle(
+                            fontFamily: "monospace",
+                            fontWeight: FontWeight.w900,
+                            fontSize: 15,
                           ),
-                          _Pill(
-                            text: header.statusEnum.label.toUpperCase(),
-                            bg: statusColor.withOpacity(0.14),
-                            fg: statusColor,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        "${header.items.length} item(s)",
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w900,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                       ),
-                      const SizedBox(height: 6),
-                      Row(
-                        children: [
-                          Icon(Icons.fork_right_rounded, size: 16, color: cs.primary),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              "${header.sourceBranchName} → ${header.targetBranchName}",
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: cs.onSurfaceVariant,
-                                fontWeight: FontWeight.w800,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          if (allRequested)
-                            Icon(Icons.chevron_right_rounded, color: cs.onSurfaceVariant),
-                        ],
+                      _Pill(
+                        text: header.statusEnum.label.toUpperCase(),
+                        bg: statusColor.withOpacity(0.12),
+                        fg: statusColor,
                       ),
-                      const SizedBox(height: 10),
-                      Divider(height: 1, color: cs.outlineVariant.withOpacity(0.45)),
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _MiniKV(
-                              label: "Requester",
-                              value: header.requesterName,
-                            ),
-                          ),
-                          Expanded(
-                            child: _MiniKV(
-                              label: "Qty",
-                              value: "${header.totalReceivedQty}/${header.totalOrderedQty}",
-                              valueTone:
-                                  header.totalReceivedQty == 0 ? cs.onSurface : cs.primary,
-                            ),
-                          ),
-                        ],
-                      ),
-                      if (!allRequested) ...[
-                        const SizedBox(height: 10),
-                        Text(
-                          "This transfer cannot be approved here because items are not all in REQUESTED status.",
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    header.routeLabel,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: cs.onSurfaceVariant,
+                      fontWeight: FontWeight.w800,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          "${header.items.length} item(s) • ${header.qtyLabel}",
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: cs.onSurfaceVariant,
-                            fontWeight: FontWeight.w700,
+                            fontWeight: FontWeight.w800,
                           ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
+                      ),
+                      if (enabled) ...[
+                        const SizedBox(width: 8),
+                        Icon(Icons.chevron_right_rounded, color: cs.onSurfaceVariant),
                       ],
                     ],
                   ),
-                ),
+                  const SizedBox(height: 6),
+                  Text(
+                    "Requester: ${header.requesterName}",
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: cs.onSurfaceVariant,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (!enabled) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      _disabledReason(header, cs),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: cs.onSurfaceVariant,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  static Color _statusColor(StockTransferStatus s, ColorScheme cs) {
-    switch (s) {
-      case StockTransferStatus.all:
-        return cs.outline;
-      case StockTransferStatus.mixed:
-        return cs.outline;
-      case StockTransferStatus.requested:
-        return cs.primary;
-      case StockTransferStatus.forPicking:
-        return Colors.deepPurple;
-      case StockTransferStatus.picking:
-        return Colors.orange;
-      case StockTransferStatus.picked:
-        return Colors.teal;
-      case StockTransferStatus.forLoading:
-        return Colors.blue;
-      case StockTransferStatus.received:
-        return Colors.green;
+  String _disabledReason(StockTransferHeader h, ColorScheme cs) {
+    if (!h.allRequested) {
+      return "Not actionable: items not all in REQUESTED status.";
     }
+    return "Offline: connect to approve.";
   }
 }
 
@@ -864,47 +723,7 @@ class _Pill extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: fg.withOpacity(0.25)),
       ),
-      child: Text(
-        text,
-        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: fg),
-      ),
-    );
-  }
-}
-
-class _MiniKV extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color? valueTone;
-
-  const _MiniKV({required this.label, required this.value, this.valueTone});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final cs = Theme.of(context).colorScheme;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: theme.textTheme.labelSmall?.copyWith(
-            color: cs.onSurfaceVariant,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          value,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: theme.textTheme.bodyMedium?.copyWith(
-            fontWeight: FontWeight.w900,
-            color: valueTone ?? cs.onSurface,
-          ),
-        ),
-      ],
+      child: Text(text, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: fg)),
     );
   }
 }
@@ -921,12 +740,11 @@ class _EmptyState extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(Icons.inbox_rounded, size: 64, color: cs.onSurfaceVariant),
             const SizedBox(height: 12),
             Text(
-              query.isEmpty ? "No stock transfers found." : "No results for '$query'.",
+              query.trim().isEmpty ? "No stock transfers found." : "No results for '$query'.",
               style: TextStyle(fontWeight: FontWeight.w900, color: cs.onSurface),
               textAlign: TextAlign.center,
             ),
@@ -961,10 +779,7 @@ class _ErrorState extends StatelessWidget {
           children: [
             Icon(Icons.error_outline_rounded, size: 56, color: cs.error),
             const SizedBox(height: 10),
-            Text(
-              "Failed to load data",
-              style: TextStyle(fontWeight: FontWeight.w900, color: cs.onSurface),
-            ),
+            Text("Failed to load data", style: TextStyle(fontWeight: FontWeight.w900, color: cs.onSurface)),
             const SizedBox(height: 10),
             ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 220),
@@ -983,391 +798,4 @@ class _ErrorState extends StatelessWidget {
       ),
     );
   }
-}
-
-enum _ApprovalActionType { approve, reject }
-
-class _ApprovalAction {
-  final _ApprovalActionType type;
-  final String? reason;
-
-  const _ApprovalAction.approve()
-      : type = _ApprovalActionType.approve,
-        reason = null;
-
-  const _ApprovalAction.reject(this.reason) : type = _ApprovalActionType.reject;
-}
-
-// ------------------------------
-// APPROVAL SHEET
-// ------------------------------
-
-class _RequestedApprovalSheet extends StatefulWidget {
-  final StockTransferHeader header;
-
-  const _RequestedApprovalSheet({required this.header});
-
-  @override
-  State<_RequestedApprovalSheet> createState() => _RequestedApprovalSheetState();
-}
-
-class _RequestedApprovalSheetState extends State<_RequestedApprovalSheet> {
-  Future<void> _reject() async {
-    final reasonCtrl = TextEditingController();
-
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) {
-        final cs = Theme.of(ctx).colorScheme;
-        return AlertDialog(
-          title: const Text("Reject Request"),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text("Reason for rejection"),
-              const SizedBox(height: 12),
-              TextField(
-                controller: reasonCtrl,
-                maxLines: 3,
-                decoration: InputDecoration(
-                  hintText: "e.g. wrong branch / insufficient stock / incomplete details",
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  filled: true,
-                  fillColor: cs.surfaceContainerLowest,
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text("Cancel"),
-            ),
-            FilledButton.tonal(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text("Reject"),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (ok == true) {
-      Navigator.pop(context, _ApprovalAction.reject(reasonCtrl.text));
-    }
-    reasonCtrl.dispose();
-  }
-
-  void _approve() {
-    Navigator.pop(context, const _ApprovalAction.approve());
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final cs = theme.colorScheme;
-
-    final header = widget.header;
-
-    return Container(
-      color: Colors.transparent,
-      child: DraggableScrollableSheet(
-        initialChildSize: 0.78,
-        minChildSize: 0.55,
-        maxChildSize: 0.92,
-        builder: (ctx, scrollCtrl) {
-          return Container(
-            decoration: BoxDecoration(
-              color: cs.surface,
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(18),
-                topRight: Radius.circular(18),
-              ),
-              border: Border.all(color: cs.outlineVariant.withOpacity(0.4)),
-            ),
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(top: 10, bottom: 6),
-                  child: Container(
-                    width: 44,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: cs.onSurfaceVariant.withOpacity(0.35),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          "Stock Transfer ${header.orderNo}",
-                          style: theme.textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w900,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      IconButton(
-                        onPressed: () => Navigator.of(context).pop(),
-                        icon: const Icon(Icons.close_rounded),
-                      ),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: ListView(
-                    controller: scrollCtrl,
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: cs.surfaceContainerLowest,
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: cs.outlineVariant.withOpacity(0.35)),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _kv("Requested by", header.requesterName),
-                            const SizedBox(height: 6),
-                            _kv(
-                              "Requested at",
-                              "${_fmtYmd(header.requestedAt)} ${_fmtHm(header.requestedAt)}",
-                            ),
-                            const SizedBox(height: 6),
-                            _kv(
-                              "Route",
-                              "${header.sourceBranchName} → ${header.targetBranchName}",
-                            ),
-                            const SizedBox(height: 6),
-                            _kv("Total Qty", "${header.totalOrderedQty}"),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      Text(
-                        "Items (${header.items.length})",
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      ...header.items.map((item) {
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 10),
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: cs.surfaceContainerLowest,
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: cs.outlineVariant.withOpacity(0.35)),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                item.productName,
-                                style: theme.textTheme.titleSmall?.copyWith(
-                                  fontWeight: FontWeight.w900,
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                "Qty: ${item.orderedQty}",
-                                style: theme.textTheme.bodyMedium?.copyWith(
-                                  color: cs.onSurfaceVariant,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                              if (item.remarks.trim().isNotEmpty) ...[
-                                const SizedBox(height: 10),
-                                Text(
-                                  "Remarks",
-                                  style: theme.textTheme.labelLarge?.copyWith(
-                                    fontWeight: FontWeight.w900,
-                                    color: cs.onSurfaceVariant,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(item.remarks),
-                              ],
-                            ],
-                          ),
-                        );
-                      }),
-                    ],
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: _reject,
-                          style: OutlinedButton.styleFrom(
-                            minimumSize: const Size.fromHeight(48),
-                            side: BorderSide(color: cs.error.withOpacity(0.45)),
-                          ),
-                          child: Text(
-                            "Reject",
-                            style: TextStyle(fontWeight: FontWeight.w900, color: cs.error),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: FilledButton(
-                          onPressed: _approve,
-                          style: FilledButton.styleFrom(
-                            minimumSize: const Size.fromHeight(48),
-                          ),
-                          child: const Text(
-                            "Approve",
-                            style: TextStyle(fontWeight: FontWeight.w900),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  static Widget _kv(String k, String v) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 96,
-          child: Text(k, style: const TextStyle(fontWeight: FontWeight.w900)),
-        ),
-        Expanded(child: Text(v)),
-      ],
-    );
-  }
-}
-
-// ------------------------------
-// MODELS
-// ------------------------------
-
-enum StockTransferStatus {
-  all("All"),
-  mixed("Mixed"),
-  requested("Requested"),
-  forPicking("For Picking"),
-  picking("Picking"),
-  picked("Picked"),
-  forLoading("For Loading"),
-  received("Received");
-
-  final String label;
-  const StockTransferStatus(this.label);
-}
-
-class StockTransferHeader {
-  final String orderNo;
-  final StockTransferStatus statusEnum;
-
-  final DateTime requestedAt;
-  final String requesterName;
-  final String sourceBranchName;
-  final String targetBranchName;
-
-  final List<StockTransferRow> items;
-
-  final int totalOrderedQty;
-  final int totalReceivedQty;
-
-  final String? bossActionBy;
-  final DateTime? bossActionAt;
-
-  final bool rejected;
-  final String? rejectReason;
-
-  const StockTransferHeader({
-    required this.orderNo,
-    required this.statusEnum,
-    required this.requestedAt,
-    required this.requesterName,
-    required this.sourceBranchName,
-    required this.targetBranchName,
-    required this.items,
-    required this.totalOrderedQty,
-    required this.totalReceivedQty,
-    this.bossActionBy,
-    this.bossActionAt,
-    this.rejected = false,
-    this.rejectReason,
-  });
-}
-
-class StockTransferRow {
-  final int id;
-  final String orderNo;
-
-  final StockTransferStatus statusEnum;
-
-  final String productName;
-  final String sourceBranchName;
-  final String targetBranchName;
-
-  final int orderedQty;
-  final int receivedQty;
-
-  final DateTime requestedAt;
-
-  final String requesterName;
-  final String remarks;
-
-  final String? bossActionBy;
-  final DateTime? bossActionAt;
-
-  final bool rejected;
-  final String? rejectReason;
-
-  const StockTransferRow({
-    required this.id,
-    required this.orderNo,
-    required this.statusEnum,
-    required this.productName,
-    required this.sourceBranchName,
-    required this.targetBranchName,
-    required this.orderedQty,
-    required this.receivedQty,
-    required this.requestedAt,
-    required this.requesterName,
-    required this.remarks,
-    this.bossActionBy,
-    this.bossActionAt,
-    this.rejected = false,
-    this.rejectReason,
-  });
-}
-
-// ------------------------------
-// Utils
-// ------------------------------
-
-String _fmtYmd(DateTime dt) {
-  final d = dt.toLocal();
-  String two(int n) => n.toString().padLeft(2, "0");
-  return "${d.year}-${two(d.month)}-${two(d.day)}";
-}
-
-String _fmtHm(DateTime dt) {
-  final d = dt.toLocal();
-  String two(int n) => n.toString().padLeft(2, "0");
-  return "${two(d.hour)}:${two(d.minute)}";
 }
