@@ -4,9 +4,11 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../../app.dart"; // must expose apiClientProvider (if yours is app_providers.dart, change it)
 import "../../data/repositories/stock_transfer_repository.dart";
 import "../../data/repositories/sales_order_repository.dart";
+import "../../data/repositories/overtime_repository.dart";
 
 import "stock_transfer/stock_transfer_view.dart";
 import "sales_order/sales_order_view.dart"; // IMPORTANT: match your real file/class name
+import "overtime/overtime_view.dart";
 
 class ApprovalView extends ConsumerStatefulWidget {
   const ApprovalView({super.key});
@@ -26,6 +28,11 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
   String? _soError;
   int _soForApprovalCount = 0;
 
+  // Overtime badge
+  bool _otLoading = true;
+  String? _otError;
+  int _otPendingCount = 0;
+
   @override
   void initState() {
     super.initState();
@@ -36,14 +43,19 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
     setState(() {
       _stLoading = true;
       _stError = null;
+
       _soLoading = true;
       _soError = null;
+
+      _otLoading = true;
+      _otError = null;
     });
 
     final api = ref.read(apiClientProvider);
 
     final stRepo = StockTransferRepository(api);
     final soRepo = SalesOrderRepository(api);
+    final otRepo = OvertimeRepository(api);
 
     // Run in parallel, but isolate failures cleanly.
     final stFuture = stRepo.fetchRequestedHeaderCount();
@@ -51,9 +63,13 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
       status: SalesOrderRepository.soStatusForApproval,
     );
 
+    // Count OT pending using meta.total_count via fetchOvertimeRequestsPaged
+    final otFuture = otRepo.fetchOvertimePendingCount();
+
     final results = await Future.wait([
       stFuture.then<Object?>((v) => v).catchError((e) => e),
       soFuture.then<Object?>((v) => v).catchError((e) => e),
+      otFuture.then<Object?>((v) => v).catchError((e) => e),
     ]);
 
     if (!mounted) return;
@@ -82,6 +98,18 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
       _soError = soRes.toString();
     }
 
+    // Overtime result
+    final otRes = results[2];
+    if (otRes is int) {
+      _otPendingCount = otRes;
+      _otLoading = false;
+      _otError = null;
+    } else {
+      _otPendingCount = 0;
+      _otLoading = false;
+      _otError = otRes.toString();
+    }
+
     setState(() {});
   }
 
@@ -105,6 +133,10 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                 _InlineError(message: "Sales Order: $_soError"),
                 const SizedBox(height: 12),
               ],
+              if (_otError != null) ...[
+                _InlineError(message: "Overtime: $_otError"),
+                const SizedBox(height: 12),
+              ],
 
               _ApprovalCardWithBadge(
                 title: "Stock Transfer",
@@ -114,7 +146,9 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                 badgeCount: _requestedCount,
                 onTap: () {
                   Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const StockTransferView()),
+                    MaterialPageRoute(
+                      builder: (_) => const StockTransferView(),
+                    ),
                   );
                 },
               ),
@@ -129,7 +163,26 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                 badgeCount: _soForApprovalCount,
                 onTap: () {
                   Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const SalesOrderApprovalView()),
+                    MaterialPageRoute(
+                      builder: (_) => const SalesOrderApprovalView(),
+                    ),
+                  );
+                },
+              ),
+
+              const SizedBox(height: 12),
+
+              _ApprovalCardWithBadge(
+                title: "Overtime",
+                subtitle: "Tap to review Overtime requests (Pending)",
+                icon: Icons.timer_rounded,
+                loading: _otLoading,
+                badgeCount: _otPendingCount,
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const OvertimeApprovalView(),
+                    ),
                   );
                 },
               ),
@@ -209,7 +262,9 @@ class _ApprovalCardWithBadge extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: cs.surfaceContainerHigh,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: cs.outlineVariant.withOpacity(0.45)),
+                    border: Border.all(
+                      color: cs.outlineVariant.withOpacity(0.45),
+                    ),
                   ),
                   child: Icon(icon, color: cs.primary),
                 ),
@@ -242,9 +297,13 @@ class _ApprovalCardWithBadge extends StatelessWidget {
                         )
                       else
                         Text(
-                          badgeCount == 0 ? "No pending requests." : "$badgeCount pending request(s).",
+                          badgeCount == 0
+                              ? "No pending requests."
+                              : "$badgeCount pending request(s).",
                           style: theme.textTheme.bodySmall?.copyWith(
-                            color: badgeCount == 0 ? cs.onSurfaceVariant : cs.primary,
+                            color: badgeCount == 0
+                                ? cs.onSurfaceVariant
+                                : cs.primary,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
@@ -282,7 +341,9 @@ class _TopBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: loading ? cs.surfaceContainerHigh : (show ? cs.primary : cs.surfaceContainerHigh),
+        color: loading
+            ? cs.surfaceContainerHigh
+            : (show ? cs.primary : cs.surfaceContainerHigh),
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: cs.outlineVariant.withOpacity(0.5)),
         boxShadow: [
