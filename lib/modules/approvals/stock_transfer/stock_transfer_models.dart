@@ -19,16 +19,16 @@ enum StockTransferStatus {
 /// Filter shown in the UI menu (exclude Mixed; Mixed is derived).
 enum StockTransferFilter {
   all("All", null),
-  requested("Requested", StockTransferStatus.requested),
-  forPicking("For Picking", StockTransferStatus.forPicking),
-  picking("Picking", StockTransferStatus.picking),
-  picked("Picked", StockTransferStatus.picked),
-  forLoading("For Loading", StockTransferStatus.forLoading),
-  received("Received", StockTransferStatus.received);
+  requested("Requested", "Requested"),
+  forPicking("For Picking", "For Picking"),
+  picking("Picking", "Picking"),
+  picked("Picked", "Picked"),
+  forLoading("For Loading", "For Loading"),
+  received("Received", "Received");
 
   final String label;
-  final StockTransferStatus? status;
-  const StockTransferFilter(this.label, this.status);
+  final String? statusValue;
+  const StockTransferFilter(this.label, this.statusValue);
 }
 
 /// Returned by approval sheet so the view can display a meaningful snackbar.
@@ -79,7 +79,8 @@ class StockTransferHeader {
   });
 
   bool get allRequested =>
-      items.isNotEmpty && items.every((e) => e.statusEnum == StockTransferStatus.requested);
+      items.isNotEmpty &&
+      items.every((e) => e.statusEnum == StockTransferStatus.requested);
 
   String get routeLabel => "$sourceBranchName → $targetBranchName";
 

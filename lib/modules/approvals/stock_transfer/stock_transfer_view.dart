@@ -1,13 +1,12 @@
 // lib/modules/approvals/stock_transfer/stock_transfer_view.dart
 import "dart:async";
+
 import "package:flutter/material.dart";
-import "package:connectivity_plus/connectivity_plus.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 
-import "../../../app.dart"; // apiClientProvider, authRepositoryProvider
+import "../../../app.dart";
 import "../../../core/network/api_client.dart";
 import "../../../data/repositories/stock_transfer_repository.dart";
-
 import "stock_transfer_models.dart";
 import "stock_transfer_sheet.dart";
 
@@ -19,88 +18,34 @@ class StockTransferView extends ConsumerStatefulWidget {
 }
 
 class _StockTransferViewState extends ConsumerState<StockTransferView> {
+  static const int _headerPageSize = 40;
+
   final TextEditingController _searchCtrl = TextEditingController();
+  final ScrollController _scrollCtrl = ScrollController();
   Timer? _debounce;
 
-  StockTransferFilter _selectedFilter = StockTransferFilter.all;
+  StockTransferFilter _selectedFilter = StockTransferFilter.requested;
   String _query = "";
 
   late final ApiClient _api;
   late final StockTransferRepository _repo;
 
   bool _loading = true;
+  bool _loadingMore = false;
+  bool _hasMore = true;
   String? _error;
-  bool _syncing = false;
 
-  bool _isOnline = false;
-  StreamSubscription<dynamic>? _connSub;
+  // Cursor is LINE offset, but we page in HEADERS.
+  int _lineCursor = 0;
 
-  List<StockTransferRow> _lines = const [];
+  // Header keys we already rendered (prevents duplicates)
+  final Set<String> _seenOrderNos = <String>{};
 
-  // cached headers
-  List<StockTransferHeader> _headers = const [];
+  // orderNo -> items
+  final Map<String, List<StockTransferRow>> _itemsByOrder = <String, List<StockTransferRow>>{};
+  final List<StockTransferHeader> _headers = <StockTransferHeader>[];
 
-  // -------------------------
-  // CONNECTIVITY
-  // -------------------------
-
-  Future<void> _initConnectivity() async {
-    final connectivity = Connectivity();
-
-    final initial = await connectivity.checkConnectivity();
-    _applyConnectivity(initial);
-
-    _connSub = connectivity.onConnectivityChanged.listen(_applyConnectivity);
-  }
-
-  void _applyConnectivity(dynamic result) {
-    bool online;
-
-    if (result is List<ConnectivityResult>) {
-      online = result.isNotEmpty && !result.contains(ConnectivityResult.none);
-    } else if (result is ConnectivityResult) {
-      online = result != ConnectivityResult.none;
-    } else {
-      online = false;
-    }
-
-    if (!mounted) {
-      _isOnline = online;
-      return;
-    }
-    setState(() => _isOnline = online);
-  }
-
-  Widget _onlineIndicator(ColorScheme cs) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 12),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            _isOnline ? Icons.wifi_rounded : Icons.wifi_off_rounded,
-            size: 20,
-            color: _isOnline ? cs.primary : cs.onSurfaceVariant,
-          ),
-          const SizedBox(width: 6),
-          Text(
-            _isOnline ? "Online" : "Offline",
-            style: TextStyle(
-              fontWeight: FontWeight.w900,
-              color: _isOnline ? cs.primary : cs.onSurfaceVariant,
-              fontSize: 12,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showOfflineNote() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("You are offline. Please connect to the internet.")),
-    );
-  }
+  bool _autoFilling = false;
 
   @override
   void initState() {
@@ -108,95 +53,236 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
     _api = ref.read(apiClientProvider);
     _repo = StockTransferRepository(_api);
 
-    _initConnectivity();
-    _loadFromServer();
+    _scrollCtrl.addListener(_onScroll);
+    _fetchFirstPage();
   }
 
   @override
   void dispose() {
-    _connSub?.cancel();
     _debounce?.cancel();
     _searchCtrl.dispose();
+    _scrollCtrl.dispose();
     super.dispose();
+  }
+
+  void _onScroll() {
+    if (_loading || _loadingMore || !_hasMore || !_scrollCtrl.hasClients) return;
+
+    final maxScroll = _scrollCtrl.position.maxScrollExtent;
+    final currentScroll = _scrollCtrl.position.pixels;
+
+    if (currentScroll >= maxScroll - 240) {
+      _fetchNextPage();
+    }
   }
 
   void _onSearchChanged(String value) {
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 320), () {
       if (!mounted) return;
-      setState(() => _query = value.trim());
+      final next = normalizeQuery(value);
+      if (next == _query) return;
+
+      setState(() => _query = next);
+      _resetAndFetch();
     });
   }
 
-  Future<void> _loadFromServer() async {
+  void _resetAndFetch() {
+    setState(() {
+      _loading = true;
+      _loadingMore = false;
+      _hasMore = true;
+      _error = null;
+
+      _lineCursor = 0;
+
+      _seenOrderNos.clear();
+      _itemsByOrder.clear();
+      _headers.clear();
+    });
+
+    _fetchFirstPage();
+  }
+
+  Future<void> _fetchFirstPage() async {
     setState(() {
       _loading = true;
       _error = null;
     });
 
     try {
-      final res = await _repo.fetchAllStockTransferLines();
-      final raw = res.rows;
+      await _fetchHeaderPage(resetCursor: true);
 
-      // Collect IDs for joins
-      final productIds = <int>[];
-      final branchIds = <int>[];
-      final userIds = <int>[];
+      if (!mounted) return;
+      setState(() => _loading = false);
 
-      for (final r in raw) {
-        final pid = _asInt(r["product_id"]);
-        if (pid != null) productIds.add(pid);
+      // Ensure the list becomes scrollable; otherwise infinite scroll never triggers.
+      _scheduleViewportFill();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
+  }
 
-        final sb = _asInt(r["source_branch"]);
-        if (sb != null) branchIds.add(sb);
+  Future<void> _fetchNextPage() async {
+    if (_loadingMore || !_hasMore) return;
 
-        final tb = _asInt(r["target_branch"]);
-        if (tb != null) branchIds.add(tb);
+    setState(() => _loadingMore = true);
 
-        final enc = _asInt(r["encoder_id"]);
-        if (enc != null) userIds.add(enc);
+    try {
+      await _fetchHeaderPage(resetCursor: false);
+
+      if (!mounted) return;
+      setState(() => _loadingMore = false);
+
+      _scheduleViewportFill();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loadingMore = false;
+      });
+    }
+  }
+
+  void _scheduleViewportFill() {
+    if (_autoFilling) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _autoFillViewportIfNeeded());
+  }
+
+  Future<void> _autoFillViewportIfNeeded() async {
+    if (!mounted) return;
+    if (_autoFilling) return;
+    if (!_hasMore) return;
+    if (_loading || _loadingMore) return;
+    if (!_scrollCtrl.hasClients) return;
+
+    // If not scrollable yet, keep fetching until it is (or no more data).
+    final pos = _scrollCtrl.position;
+    if (pos.maxScrollExtent > 0) return;
+
+    _autoFilling = true;
+    try {
+      int safety = 0;
+      while (mounted && _hasMore && !_loadingMore && _scrollCtrl.hasClients) {
+        final p = _scrollCtrl.position;
+        if (p.maxScrollExtent > 0) break; // now scrollable
+        if (safety++ > 8) break; // prevent runaway
+
+        await _fetchNextPage();
       }
+    } finally {
+      _autoFilling = false;
+    }
+  }
 
-      final products = await _repo.fetchProductsByIds(productIds);
-      final branches = await _repo.fetchBranchesByIds(branchIds);
-      final users = await _repo.fetchUsersByIds(userIds);
+  Future<void> _fetchHeaderPage({required bool resetCursor}) async {
+    final searching = _query.trim().isNotEmpty;
 
-      final productNameById = <int, String>{};
-      for (final p in products) {
-        final id = _asInt(p["product_id"]);
-        if (id == null) continue;
-        productNameById[id] = (p["product_name"]?.toString() ?? "Unknown Product").trim();
-      }
+    // Sales-order behavior: when searching, ignore status filter.
+    final status = searching ? null : _selectedFilter.statusValue;
 
-      final branchNameById = <int, String>{};
-      for (final b in branches) {
-        final id = _asInt(b["id"]);
-        if (id == null) continue;
-        branchNameById[id] = (b["branch_name"]?.toString() ?? "Unknown").trim();
-      }
+    final page = await _repo.fetchStockTransferHeadersPaged(
+      headerLimit: _headerPageSize,
+      lineOffsetCursor: resetCursor ? 0 : _lineCursor,
+      search: searching ? _query.trim() : null,
+      status: status,
+    );
 
-      final userNameById = <int, String>{};
-      for (final u in users) {
-        final uid = _asInt(u["user_id"]);
-        if (uid == null) continue;
+    // Update cursor/hasMore first.
+    _lineCursor = page.nextLineOffset;
+    _hasMore = page.hasMore;
 
-        if (truthyDeleted(u["is_deleted"])) continue;
+    if (page.lines.isEmpty || page.orderNos.isEmpty) return;
 
-        final fn = (u["user_fname"]?.toString() ?? "").trim();
-        final ln = (u["user_lname"]?.toString() ?? "").trim();
-        final name = ("$fn $ln").trim();
-        if (name.isNotEmpty) userNameById[uid] = name;
-      }
+    // Enrich lines (joins) then merge into headers.
+    await _ingestLinesForHeaders(page.lines, page.orderNos);
+  }
 
-      final lines = raw.map((m) {
-        final id = _asInt(m["id"]) ?? 0;
-        final orderNo = (m["order_no"]?.toString() ?? "").trim();
+  Future<void> _ingestLinesForHeaders(
+    List<Map<String, dynamic>> rawLines,
+    List<String> orderNos,
+  ) async {
+    // Filter out headers we already have
+    final newOrderNos = orderNos.where((o) => o.trim().isNotEmpty && !_seenOrderNos.contains(o)).toList();
+    if (newOrderNos.isEmpty) return;
+
+    // Collect IDs for joins
+    final productIds = <int>{};
+    final branchIds = <int>{};
+    final userIds = <int>{};
+
+    for (final r in rawLines) {
+      final orderNo = (r["order_no"]?.toString() ?? "").trim();
+      if (!newOrderNos.contains(orderNo)) continue;
+
+      final pid = _asInt(r["product_id"]);
+      if (pid != null) productIds.add(pid);
+
+      final sb = _asInt(r["source_branch"]);
+      if (sb != null) branchIds.add(sb);
+
+      final tb = _asInt(r["target_branch"]);
+      if (tb != null) branchIds.add(tb);
+
+      final enc = _asInt(r["encoder_id"]);
+      if (enc != null) userIds.add(enc);
+    }
+
+    final results = await Future.wait([
+      _repo.fetchProductsByIds(productIds.toList()),
+      _repo.fetchBranchesByIds(branchIds.toList()),
+      _repo.fetchUsersByIds(userIds.toList()),
+    ]);
+
+    final products = results[0];
+    final branches = results[1];
+    final users = results[2];
+
+    final productNameById = <int, String>{};
+    for (final p in products) {
+      final id = _asInt(p["product_id"]);
+      if (id == null) continue;
+      productNameById[id] = (p["product_name"]?.toString() ?? "Unknown Product").trim();
+    }
+
+    final branchNameById = <int, String>{};
+    for (final b in branches) {
+      final id = _asInt(b["id"]);
+      if (id == null) continue;
+      branchNameById[id] = (b["branch_name"]?.toString() ?? "Unknown").trim();
+    }
+
+    final userNameById = <int, String>{};
+    for (final u in users) {
+      final uid = _asInt(u["user_id"]);
+      if (uid == null) continue;
+      if (truthyDeleted(u["is_deleted"])) continue;
+
+      final fn = (u["user_fname"]?.toString() ?? "").trim();
+      final ln = (u["user_lname"]?.toString() ?? "").trim();
+      final name = ("$fn $ln").trim();
+      if (name.isNotEmpty) userNameById[uid] = name;
+    }
+
+    // Build item lists for each new header
+    for (final orderNo in newOrderNos) {
+      final lines = rawLines.where((m) => (m["order_no"]?.toString() ?? "").trim() == orderNo).toList();
+      if (lines.isEmpty) continue;
+
+      final items = <StockTransferRow>[];
+      for (final m in lines) {
+        final lineId = _asInt(m["id"]) ?? 0;
+        if (lineId <= 0) continue;
+
         final statusEnum = _parseStatus(m["status"]?.toString());
 
         final pid = _asInt(m["product_id"]);
-        final productName = pid != null
-            ? (productNameById[pid] ?? "Unknown Product")
-            : "Unknown Product";
+        final productName = pid != null ? (productNameById[pid] ?? "Unknown Product") : "Unknown Product";
 
         final sb = _asInt(m["source_branch"]);
         final tb = _asInt(m["target_branch"]);
@@ -216,130 +302,84 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
 
         final remarks = (m["remarks"]?.toString() ?? "").trim();
 
-        return StockTransferRow(
-          id: id,
-          orderNo: orderNo.isEmpty ? "ST-$id" : orderNo,
-          statusEnum: statusEnum,
-          productName: productName,
-          sourceBranchName: sourceName,
-          targetBranchName: targetName,
-          orderedQty: orderedQty,
-          receivedQty: receivedQty,
-          requestedAt: requestedAt.toLocal(),
-          requesterName: requesterName,
-          remarks: remarks,
-          bossActionBy: null,
-          bossActionAt: null,
-          rejected: false,
-          rejectReason: null,
+        items.add(
+          StockTransferRow(
+            id: lineId,
+            orderNo: orderNo,
+            statusEnum: statusEnum,
+            productName: productName,
+            sourceBranchName: sourceName,
+            targetBranchName: targetName,
+            orderedQty: orderedQty,
+            receivedQty: receivedQty,
+            requestedAt: requestedAt.toLocal(),
+            requesterName: requesterName,
+            remarks: remarks,
+            bossActionBy: null,
+            bossActionAt: null,
+            rejected: false,
+            rejectReason: null,
+          ),
         );
-      }).toList();
+      }
 
-      final headers = _buildHeaders(lines);
+      if (items.isEmpty) continue;
 
-      if (!mounted) return;
-      setState(() {
-        _lines = lines;
-        _headers = headers;
-        _loading = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = e.toString();
-        _loading = false;
-      });
+      // Save
+      _itemsByOrder[orderNo] = items;
+      _seenOrderNos.add(orderNo);
     }
+
+    // Rebuild headers from current map (stable + accurate)
+    _headers
+      ..clear()
+      ..addAll(_itemsByOrder.entries.map((e) => _buildHeader(e.key, e.value)));
+
+    // Sort newest first
+    _headers.sort((a, b) => b.requestedAt.compareTo(a.requestedAt));
+
+    if (mounted) setState(() {});
   }
 
-  // Consolidate raw line rows into header groups by orderNo
-  List<StockTransferHeader> _buildHeaders(List<StockTransferRow> rows) {
-    final map = <String, List<StockTransferRow>>{};
-    for (final r in rows) {
-      final key = r.orderNo.trim().isEmpty ? "ST-${r.id}" : r.orderNo.trim();
-      (map[key] ??= []).add(r);
-    }
+  StockTransferHeader _buildHeader(String orderNo, List<StockTransferRow> items) {
+    final sorted = [...items]..sort((a, b) => a.productName.compareTo(b.productName));
 
-    final headers = <StockTransferHeader>[];
-    map.forEach((orderNo, items) {
-      items.sort((a, b) => a.productName.compareTo(b.productName));
+    final requestedAt = sorted.map((e) => e.requestedAt).reduce((a, b) => a.isAfter(b) ? a : b);
 
-      final requestedAt = items
-          .map((e) => e.requestedAt)
-          .fold<DateTime>(
-            items.first.requestedAt,
-            (prev, cur) => cur.isAfter(prev) ? cur : prev,
-          );
+    final requesterName = sorted.first.requesterName;
+    final sourceBranchName = sorted.first.sourceBranchName;
+    final targetBranchName = sorted.first.targetBranchName;
 
-      final requesterName = items.first.requesterName;
-      final sourceBranchName = items.first.sourceBranchName;
-      final targetBranchName = items.first.targetBranchName;
+    final status = _deriveHeaderStatus(sorted);
 
-      final status = _deriveHeaderStatus(items);
+    final totalOrdered = sorted.fold<int>(0, (sum, r) => sum + r.orderedQty);
+    final totalReceived = sorted.fold<int>(0, (sum, r) => sum + r.receivedQty);
 
-      final totalOrdered = items.fold<int>(0, (sum, r) => sum + r.orderedQty);
-      final totalReceived = items.fold<int>(0, (sum, r) => sum + r.receivedQty);
-
-      headers.add(
-        StockTransferHeader(
-          orderNo: orderNo,
-          statusEnum: status,
-          requestedAt: requestedAt,
-          requesterName: requesterName,
-          sourceBranchName: sourceBranchName,
-          targetBranchName: targetBranchName,
-          items: items,
-          totalOrderedQty: totalOrdered,
-          totalReceivedQty: totalReceived,
-          rejected: false,
-          rejectReason: null,
-          bossActionAt: null,
-          bossActionBy: null,
-        ),
-      );
-    });
-
-    headers.sort((a, b) => b.requestedAt.compareTo(a.requestedAt));
-    return headers;
+    return StockTransferHeader(
+      orderNo: orderNo,
+      statusEnum: status,
+      requestedAt: requestedAt,
+      requesterName: requesterName,
+      sourceBranchName: sourceBranchName,
+      targetBranchName: targetBranchName,
+      items: sorted,
+      totalOrderedQty: totalOrdered,
+      totalReceivedQty: totalReceived,
+      rejected: false,
+      rejectReason: null,
+      bossActionAt: null,
+      bossActionBy: null,
+    );
   }
 
   StockTransferStatus _deriveHeaderStatus(List<StockTransferRow> items) {
     if (items.isEmpty) return StockTransferStatus.requested;
     final first = items.first.statusEnum;
     final allSame = items.every((e) => e.statusEnum == first);
-    if (allSame) return first;
-    return StockTransferStatus.mixed;
-  }
-
-  bool _matchesFilter(StockTransferHeader h) {
-    final f = _selectedFilter;
-    if (f == StockTransferFilter.all) return true;
-
-    // if header is mixed, match if any item matches chosen status
-    if (h.statusEnum == StockTransferStatus.mixed) {
-      return h.items.any((e) => e.statusEnum == f.status);
-    }
-    return h.statusEnum == f.status;
-  }
-
-  bool _matchesQuery(StockTransferHeader h, String qLower) {
-    if (qLower.isEmpty) return true;
-    final hay = <String>[
-      h.orderNo,
-      h.requesterName,
-      h.sourceBranchName,
-      h.targetBranchName,
-      ...h.items.map((e) => e.productName),
-    ].join(" ").toLowerCase();
-    return hay.contains(qLower);
+    return allSame ? first : StockTransferStatus.mixed;
   }
 
   Future<void> _openApprovalModal(StockTransferHeader header) async {
-    if (!_isOnline) {
-      _showOfflineNote();
-      return;
-    }
-
     if (!header.allRequested) return;
 
     final outcome = await showModalBottomSheet<StockTransferApproveOutcome?>(
@@ -352,23 +392,16 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
 
     if (outcome == null) return;
 
-    if (_syncing) return;
-    setState(() => _syncing = true);
+    _resetAndFetch();
 
-    try {
-      await _loadFromServer();
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            "Approved. Created ${outcome.consolidatorNo ?? "CLDTST"} (ID: ${outcome.consolidatorId}).",
-          ),
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          "Approved. Created ${outcome.consolidatorNo ?? "CLDTST"} (ID: ${outcome.consolidatorId}).",
         ),
-      );
-    } finally {
-      if (mounted) setState(() => _syncing = false);
-    }
+      ),
+    );
   }
 
   Future<void> _showFilterMenu() async {
@@ -378,8 +411,6 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
       showDragHandle: true,
       builder: (ctx) {
         final cs = Theme.of(ctx).colorScheme;
-        final visible = StockTransferFilter.values.toList();
-
         return Material(
           color: cs.surface,
           child: ListView(
@@ -392,7 +423,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
                   style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
                 ),
               ),
-              ...visible.map((f) {
+              ...StockTransferFilter.values.map((f) {
                 final isSelected = f == _selectedFilter;
                 return ListTile(
                   leading: Icon(
@@ -413,24 +444,16 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
       },
     );
 
-    if (selected == null) return;
+    if (selected == null || selected == _selectedFilter) return;
     setState(() => _selectedFilter = selected);
+    _resetAndFetch();
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
-
-    final qLower = _query.trim().toLowerCase();
-    final filtered = _headers.where((h) {
-      final mq = _matchesQuery(h, qLower);
-      final mf = _matchesFilter(h);
-
-      // Sales Order behavior: when searching, show search results regardless of filter
-      if (_query.trim().isNotEmpty) return mq;
-      return mf;
-    }).toList();
+    final searching = _query.trim().isNotEmpty;
 
     return Scaffold(
       backgroundColor: cs.surfaceContainerLowest,
@@ -442,14 +465,6 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
             Text("Approval Queue", style: TextStyle(fontSize: 12)),
           ],
         ),
-        actions: [
-          _onlineIndicator(cs),
-          if (_syncing)
-            const Padding(
-              padding: EdgeInsets.only(right: 12),
-              child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
-            ),
-        ],
       ),
       body: Column(
         children: [
@@ -457,7 +472,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
             child: SearchBar(
               controller: _searchCtrl,
-              hintText: "Search ST #, products, requester, route...",
+              hintText: "Search ST #, remarks, product, requester, branch...",
               onChanged: _onSearchChanged,
               leading: const Icon(Icons.search),
               elevation: WidgetStateProperty.all(0),
@@ -487,7 +502,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
                         Icon(Icons.filter_alt_rounded, size: 16, color: cs.onSurfaceVariant),
                         const SizedBox(width: 6),
                         Text(
-                          _query.trim().isNotEmpty ? "Search Results" : _selectedFilter.label,
+                          searching ? "Search Results" : _selectedFilter.label,
                           style: theme.textTheme.labelLarge?.copyWith(
                             fontWeight: FontWeight.w900,
                             color: cs.onSurface,
@@ -501,7 +516,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
                 ),
                 const Spacer(),
                 Text(
-                  "${filtered.length} transfer(s)",
+                  _loading ? "Loading..." : "${_headers.length} transfer(s)",
                   style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
                 ),
               ],
@@ -512,17 +527,26 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : (_error != null)
-                    ? _ErrorState(message: _error!, onRetry: _loadFromServer)
+                    ? _ErrorState(message: _error!, onRetry: _fetchFirstPage)
                     : RefreshIndicator(
-                        onRefresh: _loadFromServer,
-                        child: filtered.isEmpty
+                        onRefresh: () async => _resetAndFetch(),
+                        child: _headers.isEmpty
                             ? ListView(children: [_EmptyState(query: _query)])
                             : ListView.builder(
+                                controller: _scrollCtrl,
                                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                                itemCount: filtered.length,
+                                itemCount: _headers.length + (_loadingMore ? 1 : 0),
                                 itemBuilder: (context, i) {
-                                  final h = filtered[i];
-                                  final enabled = _isOnline && h.allRequested;
+                                  if (_loadingMore && i == _headers.length) {
+                                    return const Padding(
+                                      padding: EdgeInsets.symmetric(vertical: 18),
+                                      child: Center(child: CircularProgressIndicator()),
+                                    );
+                                  }
+
+                                  final h = _headers[i];
+                                  final enabled = h.allRequested;
+
                                   return Padding(
                                     padding: const EdgeInsets.only(bottom: 12),
                                     child: _StockTransferCard(
@@ -571,7 +595,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
 }
 
 // ------------------------------
-// UI: STOCK TRANSFER CARD (Sales-Order style)
+// UI: STOCK TRANSFER CARD (icon removed)
 // ------------------------------
 
 class _StockTransferCard extends StatelessWidget {
@@ -602,47 +626,46 @@ class _StockTransferCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: cs.outlineVariant.withOpacity(0.45)),
         ),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: cs.surfaceContainerHigh,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: cs.outlineVariant.withOpacity(0.45)),
-              ),
-              child: Icon(Icons.swap_horiz_rounded, color: cs.primary),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          header.orderNo,
-                          style: const TextStyle(
-                            fontFamily: "monospace",
-                            fontWeight: FontWeight.w900,
-                            fontSize: 15,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      _Pill(
-                        text: header.statusEnum.label.toUpperCase(),
-                        bg: statusColor.withOpacity(0.12),
-                        fg: statusColor,
-                      ),
-                    ],
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    header.orderNo,
+                    style: const TextStyle(
+                      fontFamily: "monospace",
+                      fontWeight: FontWeight.w900,
+                      fontSize: 15,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 6),
-                  Text(
-                    header.routeLabel,
+                ),
+                _Pill(
+                  text: header.statusEnum.label.toUpperCase(),
+                  bg: statusColor.withOpacity(0.12),
+                  fg: statusColor,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              header.routeLabel,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: cs.onSurfaceVariant,
+                fontWeight: FontWeight.w800,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    "${header.items.length} item(s) • ${header.qtyLabel}",
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: cs.onSurfaceVariant,
                       fontWeight: FontWeight.w800,
@@ -650,60 +673,34 @@ class _StockTransferCard extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          "${header.items.length} item(s) • ${header.qtyLabel}",
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: cs.onSurfaceVariant,
-                            fontWeight: FontWeight.w800,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      if (enabled) ...[
-                        const SizedBox(width: 8),
-                        Icon(Icons.chevron_right_rounded, color: cs.onSurfaceVariant),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    "Requester: ${header.requesterName}",
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: cs.onSurfaceVariant,
-                      fontWeight: FontWeight.w700,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  if (!enabled) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      _disabledReason(header, cs),
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: cs.onSurfaceVariant,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
+                ),
+                Icon(Icons.chevron_right_rounded, color: cs.onSurfaceVariant),
+              ],
             ),
+            const SizedBox(height: 6),
+            Text(
+              "Requester: ${header.requesterName}",
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: cs.onSurfaceVariant,
+                fontWeight: FontWeight.w700,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            if (!enabled) ...[
+              const SizedBox(height: 8),
+              Text(
+                "Not actionable: items not all in REQUESTED status.",
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: cs.onSurfaceVariant,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
           ],
         ),
       ),
     );
-  }
-
-  String _disabledReason(StockTransferHeader h, ColorScheme cs) {
-    if (!h.allRequested) {
-      return "Not actionable: items not all in REQUESTED status.";
-    }
-    return "Offline: connect to approve.";
   }
 }
 
@@ -723,7 +720,10 @@ class _Pill extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: fg.withOpacity(0.25)),
       ),
-      child: Text(text, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: fg)),
+      child: Text(
+        text,
+        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: fg),
+      ),
     );
   }
 }
