@@ -10,14 +10,14 @@ import "../../../data/repositories/disbursement_repository.dart";
 import "disbursement_models.dart";
 import "disbursement_sheet.dart";
 
-class DisbursementView extends ConsumerStatefulWidget {
-  const DisbursementView({super.key});
+class DisbursementApprovalView extends ConsumerStatefulWidget {
+  const DisbursementApprovalView({super.key});
 
   @override
-  ConsumerState<DisbursementView> createState() => _DisbursementViewState();
+  ConsumerState<DisbursementApprovalView> createState() => _DisbursementApprovalViewState();
 }
 
-class _DisbursementViewState extends ConsumerState<DisbursementView> {
+class _DisbursementApprovalViewState extends ConsumerState<DisbursementApprovalView> {
   static const int _pageSize = 40;
 
   final TextEditingController _searchCtrl = TextEditingController();
@@ -35,18 +35,11 @@ class _DisbursementViewState extends ConsumerState<DisbursementView> {
   bool _hasMore = true;
   String? _error;
 
-  int _rowOffset = 0; // offset in disbursement rows
-  int _rowTotal = 0;
+  int _offset = 0;
+  int _total = 0;
 
-  // Merge-safe row ingest
   final Set<int> _seenIds = <int>{};
-  final Map<String, List<DisbursementRow>> _rowsByDoc = <String, List<DisbursementRow>>{};
-  final List<String> _docKeys = <String>[];
-  final List<DisbursementApprovalHeader> _headers = <DisbursementApprovalHeader>[];
-
-  // Lightweight caches for joins (avoid re-fetching names)
-  final Map<int, String> _userNameById = <int, String>{};
-  final Map<int, String> _supplierNameById = <int, String>{};
+  final List<DisbursementHeader> _items = <DisbursementHeader>[];
 
   @override
   void initState() {
@@ -68,10 +61,8 @@ class _DisbursementViewState extends ConsumerState<DisbursementView> {
 
   void _onScroll() {
     if (_loading || _loadingMore || !_hasMore || !_scrollCtrl.hasClients) return;
-
     final maxScroll = _scrollCtrl.position.maxScrollExtent;
     final currentScroll = _scrollCtrl.position.pixels;
-
     if (currentScroll >= maxScroll - 220) {
       _fetchNextPage();
     }
@@ -81,9 +72,8 @@ class _DisbursementViewState extends ConsumerState<DisbursementView> {
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 320), () {
       if (!mounted) return;
-      final next = normalizeQuery(value);
+      final next = value.trim();
       if (next == _query) return;
-
       setState(() => _query = next);
       _resetAndFetch();
     });
@@ -96,18 +86,12 @@ class _DisbursementViewState extends ConsumerState<DisbursementView> {
       _hasMore = true;
       _error = null;
 
-      _rowOffset = 0;
-      _rowTotal = 0;
+      _offset = 0;
+      _total = 0;
 
       _seenIds.clear();
-      _rowsByDoc.clear();
-      _docKeys.clear();
-      _headers.clear();
-
-      _userNameById.clear();
-      _supplierNameById.clear();
+      _items.clear();
     });
-
     _fetchFirstPage();
   }
 
@@ -118,22 +102,19 @@ class _DisbursementViewState extends ConsumerState<DisbursementView> {
     });
 
     try {
-      // Sales-order behavior: search shows results across all statuses.
-      final st = _query.trim().isNotEmpty ? null : _selectedFilter.statusValue;
-
       final res = await _repo.fetchDisbursementsPaged(
         limit: _pageSize,
         offset: 0,
         search: _query.isNotEmpty ? _query : null,
-        status: st,
+        filter: _selectedFilter,
       );
 
       await _ingestPage(res);
 
       if (!mounted) return;
       setState(() {
-        _rowOffset = res.items.length;
-        _rowTotal = res.total;
+        _offset = res.items.length;
+        _total = res.total;
         _hasMore = res.hasMore;
         _loading = false;
       });
@@ -152,21 +133,19 @@ class _DisbursementViewState extends ConsumerState<DisbursementView> {
     setState(() => _loadingMore = true);
 
     try {
-      final st = _query.trim().isNotEmpty ? null : _selectedFilter.statusValue;
-
       final res = await _repo.fetchDisbursementsPaged(
         limit: _pageSize,
-        offset: _rowOffset,
+        offset: _offset,
         search: _query.isNotEmpty ? _query : null,
-        status: st,
+        filter: _selectedFilter,
       );
 
       await _ingestPage(res);
 
       if (!mounted) return;
       setState(() {
-        _rowOffset += res.items.length;
-        _rowTotal = res.total;
+        _offset += res.items.length;
+        _total = res.total;
         _hasMore = res.hasMore;
         _loadingMore = false;
       });
@@ -183,152 +162,104 @@ class _DisbursementViewState extends ConsumerState<DisbursementView> {
     final raw = page.items;
     if (raw.isEmpty) return;
 
-    // Determine which join ids we still need
-    final needUserIds = <int>{};
-    final needSupplierIds = <int>{};
+    final supplierIds = <int>{};
+    final userIds = <int>{};
 
-    for (final m in raw) {
-      final id = asInt(m["id"]);
-      if (id == null || id <= 0) continue;
-      if (_seenIds.contains(id)) continue;
+    for (final r in raw) {
+      final id = _asInt(r["id"]);
+      if (id != null && _seenIds.contains(id)) continue;
 
-      final encoderId = asInt(m["encoder_id"]) ?? 0;
-      final payeeId = asInt(m["payee"]) ?? 0;
+      final payee = _asInt(r["payee"]);
+      if (payee != null) supplierIds.add(payee);
 
-      if (encoderId > 0 && !_userNameById.containsKey(encoderId)) needUserIds.add(encoderId);
-      if (payeeId > 0 && !_supplierNameById.containsKey(payeeId)) needSupplierIds.add(payeeId);
+      final enc = _asInt(r["encoder_id"]);
+      if (enc != null) userIds.add(enc);
+
+      final appr = _asInt(r["approver_id"]);
+      if (appr != null) userIds.add(appr);
     }
 
-    // Fetch joins in parallel (performance)
     final results = await Future.wait([
-      needUserIds.isEmpty ? Future.value(const <Map<String, dynamic>>[]) : _repo.fetchUsersByIds(needUserIds.toList()),
-      needSupplierIds.isEmpty ? Future.value(const <Map<String, dynamic>>[]) : _repo.fetchSuppliersByIds(needSupplierIds.toList()),
+      _repo.fetchSuppliersByIds(supplierIds.toList()),
+      _repo.fetchUsersByIds(userIds.toList()),
     ]);
 
-    final users = results[0];
-    final suppliers = results[1];
+    final suppliers = results[0];
+    final users = results[1];
 
+    final supplierNameById = <int, String>{};
+    for (final s in suppliers) {
+      final id = _asInt(s["id"]);
+      if (id == null) continue;
+      supplierNameById[id] = (s["supplier_name"]?.toString() ?? "Unknown Supplier").trim();
+    }
+
+    final userNameById = <int, String>{};
     for (final u in users) {
-      final uid = asInt(u["user_id"]);
-      if (uid == null || uid <= 0) continue;
+      final uid = _asInt(u["user_id"]);
+      if (uid == null) continue;
+
+      // Ignore deleted users if the backend uses buffer/bool/int patterns
+      if (_truthy(u["is_deleted"])) continue;
 
       final fn = (u["user_fname"]?.toString() ?? "").trim();
       final mn = (u["user_mname"]?.toString() ?? "").trim();
       final ln = (u["user_lname"]?.toString() ?? "").trim();
-      final name = ([fn, mn, ln]..removeWhere((e) => e.trim().isEmpty)).join(" ").trim();
-      if (name.isNotEmpty) _userNameById[uid] = name;
+      final name = ("$fn ${mn.isEmpty ? "" : "$mn "} $ln").replaceAll(RegExp(r"\s+"), " ").trim();
+      if (name.isNotEmpty) userNameById[uid] = name;
     }
 
-    for (final s in suppliers) {
-      final sid = asInt(s["id"]);
-      if (sid == null || sid <= 0) continue;
-
-      final name = (s["supplier_name"]?.toString() ?? "").trim();
-      if (name.isNotEmpty) _supplierNameById[sid] = name;
-    }
-
-    // Convert rows and group by doc_no
     for (final m in raw) {
-      final disbId = asInt(m["id"]) ?? 0;
-      if (disbId <= 0) continue;
-      if (_seenIds.contains(disbId)) continue;
-      _seenIds.add(disbId);
+      final id = _asInt(m["id"]) ?? 0;
+      if (id <= 0) continue;
+      if (_seenIds.contains(id)) continue;
+      _seenIds.add(id);
 
       final docNo = (m["doc_no"]?.toString() ?? "").trim();
-      if (docNo.isEmpty) continue;
+      final encoderId = _asInt(m["encoder_id"]) ?? 0;
+      final payeeId = _asInt(m["payee"]) ?? 0;
 
-      if (!_rowsByDoc.containsKey(docNo)) {
-        _rowsByDoc[docNo] = <DisbursementRow>[];
-        _docKeys.add(docNo);
-      }
+      final encoderName = encoderId > 0 ? (userNameById[encoderId] ?? "Unknown") : "Unknown";
+      final payeeName = payeeId > 0 ? (supplierNameById[payeeId] ?? "Unknown") : "Unknown";
 
-      final encoderId = asInt(m["encoder_id"]) ?? 0;
-      final payeeId = asInt(m["payee"]) ?? 0;
+      final totalAmount = _asDouble(m["total_amount"]) ?? 0;
+      final paidAmount = _asDouble(m["paid_amount"]) ?? 0;
 
-      final txDate = parseDateOrIso(m["transaction_date"]?.toString());
+      final txDate = _parseDate(m["transaction_date"]?.toString()) ?? DateTime.fromMillisecondsSinceEpoch(0);
 
-      final totalAmount = asDouble(m["total_amount"]);
-      final paidAmount = asDouble(m["paid_amount"]);
+      final approverId = _asInt(m["approver_id"]);
+      final dateApproved = _parseDateTime(m["date_approved"]?.toString());
 
-      final approverId = asInt(m["approver_id"]);
-      final dateApproved = (m["date_approved"] == null)
-          ? null
-          : parseDateOrIso(m["date_approved"]?.toString());
+      final remarks = (m["remarks"]?.toString() ?? "").trim();
 
-      _rowsByDoc[docNo]!.add(
-        DisbursementRow(
-          disbursementId: disbId,
-          docNo: docNo,
-          payeeId: payeeId,
-          encoderId: encoderId,
-          transactionDate: txDate,
+      _items.add(
+        DisbursementHeader(
+          id: id,
+          docNo: docNo.isEmpty ? "DISB-$id" : docNo,
           totalAmount: totalAmount,
           paidAmount: paidAmount,
+          encoderId: encoderId,
+          encoderName: encoderName,
+          payeeId: payeeId,
+          payeeName: payeeName,
+          transactionDate: txDate.toLocal(),
           approverId: approverId,
-          dateApproved: dateApproved,
+          dateApproved: dateApproved?.toLocal(),
+          remarks: remarks,
         ),
       );
     }
 
-    _rebuildHeaders();
+    // newest first: by transaction_date then id
+    _items.sort((a, b) {
+      final c = b.transactionDate.compareTo(a.transactionDate);
+      if (c != 0) return c;
+      return b.id.compareTo(a.id);
+    });
   }
 
-  void _rebuildHeaders() {
-    _headers
-      ..clear()
-      ..addAll(
-        _docKeys.map((docNo) {
-          final rows = _rowsByDoc[docNo] ?? const <DisbursementRow>[];
-          final sorted = [...rows]..sort((a, b) => b.transactionDate.compareTo(a.transactionDate));
-
-          final txDate = sorted.isEmpty
-              ? DateTime.fromMillisecondsSinceEpoch(0)
-              : sorted.map((e) => e.transactionDate).reduce((a, b) => a.isAfter(b) ? a : b);
-
-          final payeeId = sorted.isEmpty ? 0 : sorted.first.payeeId;
-          final encoderId = sorted.isEmpty ? 0 : sorted.first.encoderId;
-
-          final payeeName = payeeId > 0 ? (_supplierNameById[payeeId] ?? "Unknown") : "Unknown";
-          final encoderName = encoderId > 0 ? (_userNameById[encoderId] ?? "Unknown") : "Unknown";
-
-          final totalAmount = sorted.fold<double>(0.0, (sum, r) => sum + r.totalAmount);
-          final paidAmount = sorted.fold<double>(0.0, (sum, r) => sum + r.paidAmount);
-
-          final status = _deriveDocStatus(sorted);
-
-          return DisbursementApprovalHeader(
-            docNo: docNo,
-            transactionDate: txDate,
-            payeeId: payeeId,
-            payeeName: payeeName,
-            encoderId: encoderId,
-            encoderName: encoderName,
-            totalAmount: totalAmount,
-            paidAmount: paidAmount,
-            status: status,
-            rows: sorted,
-          );
-        }),
-      );
-
-    // Newest first
-    _headers.sort((a, b) => b.transactionDate.compareTo(a.transactionDate));
-  }
-
-  DisbursementStatus _deriveDocStatus(List<DisbursementRow> rows) {
-    if (rows.isEmpty) return DisbursementStatus.pending;
-
-    final allPending = rows.every((r) => r.isPending);
-    if (allPending) return DisbursementStatus.pending;
-
-    final allApproved = rows.every((r) => r.isApproved);
-    if (allApproved) return DisbursementStatus.approved;
-
-    return DisbursementStatus.mixed;
-  }
-
-  Future<void> _openApprovalModal(DisbursementApprovalHeader header) async {
-    if (!header.isActionable) return;
+  Future<void> _openApprovalModal(DisbursementHeader header) async {
+    if (header.isApproved) return; // non-clickable as requested
 
     final outcome = await showModalBottomSheet<DisbursementApproveOutcome?>(
       context: context,
@@ -340,12 +271,12 @@ class _DisbursementViewState extends ConsumerState<DisbursementView> {
 
     if (outcome == null) return;
 
-    // Refresh cheap + consistent
+    // refresh like Sales Order / Stock Transfer style
     _resetAndFetch();
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("Approved ${outcome.docNo}.")),
+      SnackBar(content: Text("Approved ${outcome.docNo} (ID: ${outcome.disbursementId}).")),
     );
   }
 
@@ -363,10 +294,7 @@ class _DisbursementViewState extends ConsumerState<DisbursementView> {
             children: [
               const Padding(
                 padding: EdgeInsets.fromLTRB(16, 12, 16, 8),
-                child: Text(
-                  "Filter by Status",
-                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
-                ),
+                child: Text("Filter", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
               ),
               ...DisbursementFilter.values.map((f) {
                 final isSelected = f == _selectedFilter;
@@ -399,15 +327,6 @@ class _DisbursementViewState extends ConsumerState<DisbursementView> {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
 
-    // Client-side filter (doc-level) only when not searching.
-    final list = _headers.where((h) {
-      if (_query.trim().isNotEmpty) return true;
-      if (_selectedFilter == DisbursementFilter.all) return true;
-      if (_selectedFilter == DisbursementFilter.pending) return h.status == DisbursementStatus.pending;
-      if (_selectedFilter == DisbursementFilter.approved) return h.status == DisbursementStatus.approved;
-      return true;
-    }).toList();
-
     return Scaffold(
       backgroundColor: cs.surfaceContainerLowest,
       appBar: AppBar(
@@ -425,7 +344,7 @@ class _DisbursementViewState extends ConsumerState<DisbursementView> {
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
             child: SearchBar(
               controller: _searchCtrl,
-              hintText: "Search Doc #, supplier, encoder...",
+              hintText: "Search Doc #, remarks, payee, encoder...",
               onChanged: _onSearchChanged,
               leading: const Icon(Icons.search),
               elevation: WidgetStateProperty.all(0),
@@ -455,7 +374,7 @@ class _DisbursementViewState extends ConsumerState<DisbursementView> {
                         Icon(Icons.filter_alt_rounded, size: 16, color: cs.onSurfaceVariant),
                         const SizedBox(width: 6),
                         Text(
-                          _query.trim().isNotEmpty ? "Search Results" : _selectedFilter.label,
+                          _selectedFilter.label,
                           style: theme.textTheme.labelLarge?.copyWith(
                             fontWeight: FontWeight.w900,
                             color: cs.onSurface,
@@ -469,7 +388,7 @@ class _DisbursementViewState extends ConsumerState<DisbursementView> {
                 ),
                 const Spacer(),
                 Text(
-                  _loading ? "Loading..." : (_rowTotal > 0 ? "${list.length} / $_rowTotal" : "${list.length}"),
+                  _loading ? "Loading..." : (_total > 0 ? "${_items.length} / $_total" : "${_items.length}"),
                   style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
                 ),
               ],
@@ -483,22 +402,22 @@ class _DisbursementViewState extends ConsumerState<DisbursementView> {
                     ? _ErrorState(message: _error!, onRetry: _fetchFirstPage)
                     : RefreshIndicator(
                         onRefresh: () async => _resetAndFetch(),
-                        child: list.isEmpty
+                        child: _items.isEmpty
                             ? ListView(children: [_EmptyState(query: _query)])
                             : ListView.builder(
                                 controller: _scrollCtrl,
                                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                                itemCount: list.length + (_loadingMore ? 1 : 0),
+                                itemCount: _items.length + (_loadingMore ? 1 : 0),
                                 itemBuilder: (context, i) {
-                                  if (_loadingMore && i == list.length) {
+                                  if (_loadingMore && i == _items.length) {
                                     return const Padding(
                                       padding: EdgeInsets.symmetric(vertical: 18),
                                       child: Center(child: CircularProgressIndicator()),
                                     );
                                   }
 
-                                  final h = list[i];
-                                  final enabled = h.isActionable;
+                                  final h = _items[i];
+                                  final enabled = !h.isApproved;
 
                                   return Padding(
                                     padding: const EdgeInsets.only(bottom: 12),
@@ -516,14 +435,61 @@ class _DisbursementViewState extends ConsumerState<DisbursementView> {
       ),
     );
   }
+
+  DateTime? _parseDate(String? s) {
+    if (s == null) return null;
+    final v = s.trim();
+    if (v.isEmpty) return null;
+    // disbursement.transaction_date looks like YYYY-MM-DD
+    return DateTime.tryParse(v);
+  }
+
+  DateTime? _parseDateTime(String? s) {
+    if (s == null) return null;
+    final v = s.trim();
+    if (v.isEmpty) return null;
+    return DateTime.tryParse(v);
+  }
+
+  int? _asInt(Object? v) {
+    if (v == null) return null;
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    return int.tryParse(v.toString());
+  }
+
+  double? _asDouble(Object? v) {
+    if (v == null) return null;
+    if (v is double) return v;
+    if (v is int) return v.toDouble();
+    if (v is num) return v.toDouble();
+    return double.tryParse(v.toString());
+  }
+
+  bool _truthy(Object? v) {
+    if (v == null) return false;
+    if (v is bool) return v;
+    if (v is int) return v != 0;
+    if (v is num) return v.toInt() != 0;
+    if (v is Map) {
+      // handle Buffer-like map: {"type":"Buffer","data":[1]}
+      final m = v.cast<String, dynamic>();
+      final data = m["data"];
+      if (data is List && data.isNotEmpty) {
+        final first = data.first;
+        if (first is int) return first != 0;
+      }
+    }
+    return v.toString() == "1" || v.toString().toLowerCase() == "true";
+  }
 }
 
 // ------------------------------
-// UI: Card
+// UI: DISBURSEMENT CARD
 // ------------------------------
 
 class _DisbursementCard extends StatelessWidget {
-  final DisbursementApprovalHeader header;
+  final DisbursementHeader header;
   final bool enabled;
   final VoidCallback onTap;
 
@@ -538,9 +504,7 @@ class _DisbursementCard extends StatelessWidget {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
 
-    final statusColor = header.status == DisbursementStatus.pending
-        ? cs.primary
-        : (header.status == DisbursementStatus.approved ? Colors.green : cs.outline);
+    final statusColor = disbursementStatusColor(header, cs);
 
     return InkWell(
       onTap: enabled ? onTap : null,
@@ -570,7 +534,7 @@ class _DisbursementCard extends StatelessWidget {
                   ),
                 ),
                 _Pill(
-                  text: header.status.label.toUpperCase(),
+                  text: (header.isApproved ? "APPROVED" : "PENDING"),
                   bg: statusColor.withOpacity(0.12),
                   fg: statusColor,
                 ),
@@ -578,22 +542,19 @@ class _DisbursementCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              "Payee: ${header.payeeName}",
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: cs.onSurfaceVariant,
-                fontWeight: FontWeight.w800,
-              ),
+              header.payeeName,
+              style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w900),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
             const SizedBox(height: 6),
             Text(
-              "Encoder: ${header.encoderName} • Date: ${fmtYmd(header.transactionDate)}",
+              "Date: ${fmtYmd(header.transactionDate)} • Encoder: ${header.encoderName}",
               style: theme.textTheme.bodySmall?.copyWith(
                 color: cs.onSurfaceVariant,
-                fontWeight: FontWeight.w700,
+                fontWeight: FontWeight.w800,
               ),
-              maxLines: 1,
+              maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
             const SizedBox(height: 10),
@@ -601,21 +562,15 @@ class _DisbursementCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    "Total: ${formatMoney(header.totalAmount)}",
+                    "Total: ${money(header.totalAmount)} • Paid: ${money(header.paidAmount)}",
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: cs.onSurfaceVariant,
-                      fontWeight: FontWeight.w900,
+                      fontWeight: FontWeight.w800,
                     ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                Text(
-                  "Paid: ${formatMoney(header.paidAmount)}",
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: cs.onSurfaceVariant,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(width: 6),
                 Icon(Icons.chevron_right_rounded, color: cs.onSurfaceVariant),
               ],
             ),
@@ -711,10 +666,7 @@ class _ErrorState extends StatelessWidget {
           children: [
             Icon(Icons.error_outline_rounded, size: 56, color: cs.error),
             const SizedBox(height: 10),
-            Text(
-              "Failed to load data",
-              style: TextStyle(fontWeight: FontWeight.w900, color: cs.onSurface),
-            ),
+            Text("Failed to load data", style: TextStyle(fontWeight: FontWeight.w900, color: cs.onSurface)),
             const SizedBox(height: 10),
             ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 220),

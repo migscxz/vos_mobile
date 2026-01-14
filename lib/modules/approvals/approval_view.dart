@@ -2,16 +2,17 @@
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 
-import "../../app.dart"; // must expose apiClientProvider
-import "../../core/network/api_client.dart";
-
+import "../../app.dart";
+import "../../data/repositories/stock_transfer_repository.dart";
 import "../../data/repositories/sales_order_repository.dart";
 import "../../data/repositories/overtime_repository.dart";
+import "../../data/repositories/disbursement_repository.dart";
 
 import "stock_transfer/stock_transfer_view.dart";
-import "sales_order/sales_order_view.dart"; // IMPORTANT: match your real file/class name
+import "sales_order/sales_order_view.dart";
 import "overtime/overtime_view.dart";
 import "disbursement/disbursement_view.dart";
+import "disbursement/disbursement_models.dart";
 
 class ApprovalView extends ConsumerStatefulWidget {
   const ApprovalView({super.key});
@@ -21,12 +22,10 @@ class ApprovalView extends ConsumerStatefulWidget {
 }
 
 class _ApprovalViewState extends ConsumerState<ApprovalView> {
-  // approval_view >>> mwa mwa I love you
-
-  // Stock Transfer badge (Requested headers = unique order_no where all lines are Requested)
+  // Stock Transfer badge
   bool _stLoading = true;
   String? _stError;
-  int _stRequestedHeaders = 0;
+  int _requestedCount = 0;
 
   // Sales Order badge
   bool _soLoading = true;
@@ -38,10 +37,10 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
   String? _otError;
   int _otPendingCount = 0;
 
-  // Disbursement badge (Pending doc_no groups)
+  // Disbursement badge
   bool _dbLoading = true;
   String? _dbError;
-  int _dbPendingDocCount = 0;
+  int _dbPendingCount = 0;
 
   @override
   void initState() {
@@ -66,135 +65,79 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
 
     final api = ref.read(apiClientProvider);
 
+    final stRepo = StockTransferRepository(api);
     final soRepo = SalesOrderRepository(api);
     final otRepo = OvertimeRepository(api);
+    final dbRepo = DisbursementRepository(api);
 
     // Run in parallel, but isolate failures cleanly.
-    final futures = <Future<Object?>>[
-      _fetchStockTransferRequestedHeaderCount(api).then<Object?>((v) => v).catchError((e) => e),
-      soRepo
-          .fetchSalesOrderCount(status: SalesOrderRepository.soStatusForApproval)
-          .then<Object?>((v) => v)
-          .catchError((e) => e),
-      otRepo.fetchOvertimePendingCount().then<Object?>((v) => v).catchError((e) => e),
-      _fetchDisbursementPendingDocCount(api).then<Object?>((v) => v).catchError((e) => e),
-    ];
+    final stFuture = stRepo.fetchRequestedHeaderCount();
+    final soFuture = soRepo.fetchSalesOrderCount(
+      status: SalesOrderRepository.soStatusForApproval,
+    );
+    final otFuture = otRepo.fetchOvertimePendingCount();
 
-    final results = await Future.wait(futures);
+    // Pending disbursements: approver_id IS NULL AND date_approved IS NULL
+    final dbFuture = dbRepo.fetchDisbursementCount(filter: DisbursementFilter.pending);
+
+    final results = await Future.wait([
+      stFuture.then<Object?>((v) => v).catchError((e) => e),
+      soFuture.then<Object?>((v) => v).catchError((e) => e),
+      otFuture.then<Object?>((v) => v).catchError((e) => e),
+      dbFuture.then<Object?>((v) => v).catchError((e) => e),
+    ]);
+
     if (!mounted) return;
 
-    // Stock Transfer
+    // Stock Transfer result
     final stRes = results[0];
     if (stRes is int) {
-      _stRequestedHeaders = stRes;
+      _requestedCount = stRes;
+      _stLoading = false;
       _stError = null;
     } else {
-      _stRequestedHeaders = 0;
+      _requestedCount = 0;
+      _stLoading = false;
       _stError = stRes.toString();
     }
-    _stLoading = false;
 
-    // Sales Order
+    // Sales Order result
     final soRes = results[1];
     if (soRes is int) {
       _soForApprovalCount = soRes;
+      _soLoading = false;
       _soError = null;
     } else {
       _soForApprovalCount = 0;
+      _soLoading = false;
       _soError = soRes.toString();
     }
-    _soLoading = false;
 
-    // Overtime
+    // Overtime result
     final otRes = results[2];
     if (otRes is int) {
       _otPendingCount = otRes;
+      _otLoading = false;
       _otError = null;
     } else {
       _otPendingCount = 0;
+      _otLoading = false;
       _otError = otRes.toString();
     }
-    _otLoading = false;
 
-    // Disbursement
+    // Disbursement result
     final dbRes = results[3];
     if (dbRes is int) {
-      _dbPendingDocCount = dbRes;
+      _dbPendingCount = dbRes;
+      _dbLoading = false;
       _dbError = null;
     } else {
-      _dbPendingDocCount = 0;
+      _dbPendingCount = 0;
+      _dbLoading = false;
       _dbError = dbRes.toString();
     }
-    _dbLoading = false;
 
     setState(() {});
-  }
-
-  /// Computes unique order_no headers where ALL lines are in Requested status.
-  /// This avoids the common pitfall where a repository method compiles but is
-  /// accidentally placed outside the class due to a bracket mismatch.
-  Future<int> _fetchStockTransferRequestedHeaderCount(ApiClient api) async {
-    const stCollection = "stock_transfer";
-
-    final json = await api.getJson(
-      "/items/$stCollection",
-      query: {
-        "limit": "-1",
-        "fields": "id,order_no,status",
-        "sort": "-date_encoded,-id",
-      },
-    );
-
-    final List data = (json["data"] as List?) ?? const [];
-
-    final Map<String, List<String>> statusesByOrder = {};
-    for (final item in data) {
-      if (item is! Map) continue;
-      final m = item.cast<String, dynamic>();
-
-      final orderNo = (m["order_no"]?.toString() ?? "").trim();
-      if (orderNo.isEmpty) continue;
-
-      final status = (m["status"]?.toString() ?? "").trim().toLowerCase();
-      (statusesByOrder[orderNo] ??= []).add(status);
-    }
-
-    int count = 0;
-    statusesByOrder.forEach((_, statuses) {
-      if (statuses.isEmpty) return;
-      final allRequested = statuses.every((s) => s.replaceAll(" ", "") == "requested");
-      if (allRequested) count++;
-    });
-
-    return count;
-  }
-
-  /// Pending = approver_id IS NULL AND date_approved IS NULL.
-  /// Count is unique doc_no (group key), so badge matches the card grouping.
-  Future<int> _fetchDisbursementPendingDocCount(ApiClient api) async {
-    const disbCollection = "disbursement";
-
-    final json = await api.getJson(
-      "/items/$disbCollection",
-      query: {
-        "limit": "-1",
-        "fields": "id,doc_no,approver_id,date_approved",
-        "filter[_and][0][approver_id][_null]": "true",
-        "filter[_and][1][date_approved][_null]": "true",
-      },
-    );
-
-    final List data = (json["data"] as List?) ?? const [];
-    final seen = <String>{};
-
-    for (final item in data) {
-      if (item is! Map) continue;
-      final m = item.cast<String, dynamic>();
-      final docNo = (m["doc_no"]?.toString() ?? "").trim();
-      if (docNo.isNotEmpty) seen.add(docNo);
-    }
-
-    return seen.length;
   }
 
   @override
@@ -209,6 +152,8 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
             children: [
+              // mwa mwa I love you (requested) — kept as a harmless comment; not shown to users.
+
               if (_stError != null) ...[
                 _InlineError(message: "Stock Transfer: $_stError"),
                 const SizedBox(height: 12),
@@ -231,7 +176,7 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                 subtitle: "Tap to review Requested stock transfers",
                 icon: Icons.swap_horiz_rounded,
                 loading: _stLoading,
-                badgeCount: _stRequestedHeaders,
+                badgeCount: _requestedCount,
                 onTap: () {
                   Navigator.of(context).push(
                     MaterialPageRoute(builder: (_) => const StockTransferView()),
@@ -276,10 +221,10 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                 subtitle: "Tap to review Disbursement approvals (Pending)",
                 icon: Icons.payments_rounded,
                 loading: _dbLoading,
-                badgeCount: _dbPendingDocCount,
+                badgeCount: _dbPendingCount,
                 onTap: () {
                   Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const DisbursementView()),
+                    MaterialPageRoute(builder: (_) => const DisbursementApprovalView()),
                   );
                 },
               ),
@@ -359,7 +304,9 @@ class _ApprovalCardWithBadge extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: cs.surfaceContainerHigh,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: cs.outlineVariant.withOpacity(0.45)),
+                    border: Border.all(
+                      color: cs.outlineVariant.withOpacity(0.45),
+                    ),
                   ),
                   child: Icon(icon, color: cs.primary),
                 ),
@@ -392,9 +339,7 @@ class _ApprovalCardWithBadge extends StatelessWidget {
                         )
                       else
                         Text(
-                          badgeCount == 0
-                              ? "No pending requests."
-                              : "$badgeCount pending request(s).",
+                          badgeCount == 0 ? "No pending requests." : "$badgeCount pending request(s).",
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: badgeCount == 0 ? cs.onSurfaceVariant : cs.primary,
                             fontWeight: FontWeight.w800,
@@ -434,9 +379,7 @@ class _TopBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: loading
-            ? cs.surfaceContainerHigh
-            : (show ? cs.primary : cs.surfaceContainerHigh),
+        color: loading ? cs.surfaceContainerHigh : (show ? cs.primary : cs.surfaceContainerHigh),
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: cs.outlineVariant.withOpacity(0.5)),
         boxShadow: [

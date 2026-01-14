@@ -1,7 +1,8 @@
 // lib/data/repositories/disbursement_repository.dart
 import "../../core/network/api_client.dart";
+import "../../modules/approvals/disbursement/disbursement_models.dart";
 
-/// Simple paged result wrapper for list screens (Sales-Order style).
+/// Simple paged result wrapper for list screens.
 class PagedResult<T> {
   final List<T> items;
   final int total;
@@ -20,67 +21,47 @@ class PagedResult<T> {
 
 class DisbursementRepository {
   DisbursementRepository(this._api);
-
   final ApiClient _api;
 
-  // =============================
-  // CONFIG
-  // =============================
+  static const String _disbursement = "disbursement";
+  static const String _disbursementPayables = "disbursement_payables";
+  static const String _suppliers = "suppliers";
+  static const String _users = "user";
+  static const String _coa = "chart_of_accounts";
 
-  static const String _disbCollection = "disbursement";
-  static const String _userCollection = "user";
-  static const String _suppliersCollection = "suppliers";
-
-  // Only what we need for approvals list + action gating.
-  static const String _disbFields =
+  static const String _disbursementFields =
       "id,doc_no,total_amount,paid_amount,encoder_id,payee,transaction_date,"
-      "approver_id,date_approved,date_created,date_updated";
+      "approver_id,date_approved,remarks,date_created,date_updated";
 
-  // =============================
-  // PUBLIC: Paged list (server-side)
-  // =============================
-
-  /// status:
-  /// - null => All
-  /// - "pending" => approver_id IS NULL AND date_approved IS NULL
-  /// - "approved" => approver_id IS NOT NULL AND date_approved IS NOT NULL
-  ///
-  /// NOTE: paging is row-based (disbursement rows). The view groups by doc_no.
+  /// Paged fetch for disbursement headers with:
+  /// - filter: All / Pending / Approved
+  /// - server-side search (doc_no, remarks, plus supplier/user name lookups -> ID filters)
+  /// Uses meta.total_count for correct pagination.
   Future<PagedResult<Map<String, dynamic>>> fetchDisbursementsPaged({
     required int limit,
     required int offset,
     String? search,
-    String? status,
+    DisbursementFilter filter = DisbursementFilter.pending,
   }) async {
     final query = <String, String>{
       "limit": limit.toString(),
       "offset": offset.toString(),
-      "sort": "-transaction_date,-id",
-      "fields": _disbFields,
+      "sort": "-date_created,-id",
+      "fields": _disbursementFields,
       "meta": "total_count",
     };
 
-    final st = (status ?? "").trim().toLowerCase();
-    if (st == "pending") {
-      query["filter[_and][0][approver_id][_null]"] = "true";
-      query["filter[_and][1][date_approved][_null]"] = "true";
-    } else if (st == "approved") {
-      query["filter[_and][0][approver_id][_nnull]"] = "true";
-      query["filter[_and][1][date_approved][_nnull]"] = "true";
-    }
+    _applyStatusFilter(query, filter);
 
     final q = (search ?? "").trim();
     if (q.isNotEmpty) {
       await _applyServerSideSearch(query, q);
     }
 
-    final json = await _api.getJson("/items/$_disbCollection", query: query);
+    final json = await _api.getJson("/items/$_disbursement", query: query);
 
     final List raw = (json["data"] as List?) ?? const [];
-    final items = raw
-        .whereType<Map>()
-        .map((m) => Map<String, dynamic>.from(m))
-        .toList();
+    final items = raw.whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList();
 
     int total = items.length;
     final meta = json["meta"];
@@ -97,36 +78,88 @@ class DisbursementRepository {
     );
   }
 
-  // =============================
-  // LOOKUPS
-  // =============================
+  Future<int> fetchDisbursementCount({required DisbursementFilter filter}) async {
+    final query = <String, String>{
+      "limit": "1",
+      "fields": "id",
+      "meta": "total_count",
+    };
 
-  Future<List<Map<String, dynamic>>> fetchUsersByIds(List<int> userIds) async {
-    if (userIds.isEmpty) return const [];
+    _applyStatusFilter(query, filter);
 
-    final ids = userIds.where((e) => e > 0).toSet().toList()..sort();
+    final json = await _api.getJson("/items/$_disbursement", query: query);
+
+    final meta = json["meta"];
+    if (meta is Map) {
+      final tc = _asInt(meta["total_count"]);
+      return tc ?? 0;
+    }
+    return 0;
+  }
+
+  void _applyStatusFilter(Map<String, String> query, DisbursementFilter filter) {
+    // All: no filter
+    if (filter == DisbursementFilter.all) return;
+
+    if (filter == DisbursementFilter.pending) {
+      query["filter[approver_id][_null]"] = "true";
+      query["filter[date_approved][_null]"] = "true";
+      return;
+    }
+
+    if (filter == DisbursementFilter.approved) {
+      query["filter[approver_id][_nnull]"] = "true";
+      query["filter[date_approved][_nnull]"] = "true";
+      return;
+    }
+  }
+
+  // ----------------------------
+  // Payables for modal
+  // ----------------------------
+
+  Future<List<Map<String, dynamic>>> fetchPayablesByDisbursementId(int disbursementId) async {
     final json = await _api.getJson(
-      "/items/$_userCollection",
+      "/items/$_disbursementPayables",
       query: {
         "limit": "-1",
-        "filter[user_id][_in]": ids.join(","),
-        "fields": "user_id,user_fname,user_mname,user_lname,is_deleted",
+        "sort": "date,id",
+        "filter[disbursement_id][_eq]": disbursementId.toString(),
+        "fields": "id,disbursement_id,reference_no,date,coa_id,amount,remarks,date_created,division_id",
       },
     );
 
     final List data = (json["data"] as List?) ?? const [];
-    return data
-        .whereType<Map>()
-        .map((m) => Map<String, dynamic>.from(m))
-        .toList();
+    return data.whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList();
   }
+
+  Future<List<Map<String, dynamic>>> fetchCoaByIds(List<int> coaIds) async {
+    if (coaIds.isEmpty) return const [];
+
+    final ids = coaIds.where((e) => e > 0).toSet().toList()..sort();
+    final json = await _api.getJson(
+      "/items/$_coa",
+      query: {
+        "limit": "-1",
+        "filter[coa_id][_in]": ids.join(","),
+        "fields": "coa_id,account_title",
+      },
+    );
+
+    final List data = (json["data"] as List?) ?? const [];
+    return data.whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList();
+  }
+
+  // ----------------------------
+  // Lookups (names)
+  // ----------------------------
 
   Future<List<Map<String, dynamic>>> fetchSuppliersByIds(List<int> supplierIds) async {
     if (supplierIds.isEmpty) return const [];
 
     final ids = supplierIds.where((e) => e > 0).toSet().toList()..sort();
     final json = await _api.getJson(
-      "/items/$_suppliersCollection",
+      "/items/$_suppliers",
       query: {
         "limit": "-1",
         "filter[id][_in]": ids.join(","),
@@ -135,66 +168,48 @@ class DisbursementRepository {
     );
 
     final List data = (json["data"] as List?) ?? const [];
-    return data
-        .whereType<Map>()
-        .map((m) => Map<String, dynamic>.from(m))
-        .toList();
+    return data.whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList();
   }
 
-  // =============================
-  // APPROVAL ACTION
-  // =============================
+  Future<List<Map<String, dynamic>>> fetchUsersByIds(List<int> userIds) async {
+    if (userIds.isEmpty) return const [];
 
-  /// Approves ALL disbursement rows that share the same doc_no.
-  ///
-  /// Sets:
-  /// - approver_id
-  /// - date_approved (UTC ISO string)
-  Future<void> approveByDocNo({
-    required String docNo,
-    required int approverId,
-  }) async {
-    final dn = docNo.trim();
-    if (dn.isEmpty) throw Exception("doc_no is required.");
-
-    // 1) Load all disbursement ids for this doc_no
+    final ids = userIds.where((e) => e > 0).toSet().toList()..sort();
     final json = await _api.getJson(
-      "/items/$_disbCollection",
+      "/items/$_users",
       query: {
         "limit": "-1",
-        "filter[doc_no][_eq]": dn,
-        "fields": "id,doc_no",
+        "filter[user_id][_in]": ids.join(","),
+        "fields": "user_id,user_fname,user_mname,user_lname,is_deleted",
       },
     );
 
     final List data = (json["data"] as List?) ?? const [];
-    final keys = <int>[];
-    for (final row in data.whereType<Map>()) {
-      final id = _asInt(row["id"]);
-      if (id != null) keys.add(id);
-    }
+    return data.whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList();
+  }
 
-    if (keys.isEmpty) {
-      throw Exception("No disbursement rows found for doc_no='$dn'.");
-    }
+  // ----------------------------
+  // Approval action
+  // ----------------------------
 
-    // 2) Patch all keys
+  Future<void> approveDisbursement({
+    required int disbursementId,
+    required int approverId,
+  }) async {
     final nowIso = DateTime.now().toUtc().toIso8601String();
+
     await _api.patch(
-      "/items/$_disbCollection",
+      "/items/$_disbursement/$disbursementId",
       data: {
-        "keys": keys,
-        "data": {
-          "approver_id": approverId,
-          "date_approved": nowIso,
-        },
+        "approver_id": approverId,
+        "date_approved": nowIso,
       },
     );
   }
 
-  // =============================
-  // SERVER-SIDE SEARCH (Sales-Order style)
-  // =============================
+  // ----------------------------
+  // Server-side search expansion
+  // ----------------------------
 
   Future<void> _applyServerSideSearch(Map<String, String> query, String q) async {
     int i = 0;
@@ -206,6 +221,7 @@ class DisbursementRepository {
 
     // Base searchable fields on disbursement
     addOr("doc_no", "_icontains", q);
+    addOr("remarks", "_icontains", q);
 
     // Numeric quick hits
     final asInt = int.tryParse(q);
@@ -214,9 +230,10 @@ class DisbursementRepository {
       addOr("encoder_id", "_eq", q);
       addOr("payee", "_eq", q);
       addOr("approver_id", "_eq", q);
+      addOr("transaction_type", "_eq", q);
     }
 
-    // Expand by supplier/user lookups if there are letters
+    // Expand only if query has letters
     final hasLetters = RegExp(r"[A-Za-z]").hasMatch(q);
     if (!hasLetters) return;
 
@@ -234,6 +251,7 @@ class DisbursementRepository {
     if (userIds.isNotEmpty) {
       addOr("encoder_id", "_in", userIds.join(","));
       addOr("approver_id", "_in", userIds.join(","));
+      addOr("posted_by", "_in", userIds.join(","));
     }
   }
 
@@ -242,7 +260,7 @@ class DisbursementRepository {
     if (s.isEmpty) return const [];
 
     final json = await _api.getJson(
-      "/items/$_suppliersCollection",
+      "/items/$_suppliers",
       query: {
         "limit": limit.toString(),
         "fields": "id",
@@ -252,7 +270,8 @@ class DisbursementRepository {
 
     final List data = (json["data"] as List?) ?? const [];
     final ids = <int>[];
-    for (final row in data.whereType<Map>()) {
+    for (final row in data) {
+      if (row is! Map) continue;
       final id = _asInt(row["id"]) ?? 0;
       if (id > 0) ids.add(id);
     }
@@ -264,7 +283,7 @@ class DisbursementRepository {
     if (s.isEmpty) return const [];
 
     final json = await _api.getJson(
-      "/items/$_userCollection",
+      "/items/$_users",
       query: {
         "limit": limit.toString(),
         "fields": "user_id",
@@ -276,7 +295,8 @@ class DisbursementRepository {
 
     final List data = (json["data"] as List?) ?? const [];
     final ids = <int>[];
-    for (final row in data.whereType<Map>()) {
+    for (final row in data) {
+      if (row is! Map) continue;
       final id = _asInt(row["user_id"]) ?? 0;
       if (id > 0) ids.add(id);
     }
@@ -287,7 +307,7 @@ class DisbursementRepository {
     if (v == null) return null;
     if (v is Map) {
       final m = v.cast<String, dynamic>();
-      return _asInt(m["id"] ?? m["user_id"]);
+      return _asInt(m["id"] ?? m["user_id"] ?? m["coa_id"]);
     }
     if (v is int) return v;
     if (v is num) return v.toInt();
