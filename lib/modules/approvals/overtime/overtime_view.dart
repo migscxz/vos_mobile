@@ -228,7 +228,7 @@ class _OvertimeApprovalViewState extends ConsumerState<OvertimeApprovalView> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text("Overtime", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
-            Text("Approval Queue", style: TextStyle(fontSize: 12)),
+            Text("Approval", style: TextStyle(fontSize: 12)),
           ],
         ),
       ),

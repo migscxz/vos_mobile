@@ -286,7 +286,7 @@ class _SalesOrderApprovalViewState extends ConsumerState<SalesOrderApprovalView>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text("Sales Orders", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
-            Text("Approval Queue", style: TextStyle(fontSize: 12)),
+            Text("Approval", style: TextStyle(fontSize: 12)),
           ],
         ),
       ),

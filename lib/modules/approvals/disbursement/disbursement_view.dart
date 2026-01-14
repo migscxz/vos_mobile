@@ -1,4 +1,4 @@
-// lib/modules/approvals/stock_transfer/stock_transfer_view.dart
+// lib/modules/approvals/disbursement/disbursement_view.dart
 import "dart:async";
 
 import "package:flutter/material.dart";
@@ -6,52 +6,53 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 
 import "../../../app.dart";
 import "../../../core/network/api_client.dart";
-import "../../../data/repositories/stock_transfer_repository.dart";
-import "stock_transfer_models.dart";
-import "stock_transfer_sheet.dart";
+import "../../../data/repositories/disbursement_repository.dart";
+import "disbursement_models.dart";
+import "disbursement_sheet.dart";
 
-class StockTransferView extends ConsumerStatefulWidget {
-  const StockTransferView({super.key});
+class DisbursementView extends ConsumerStatefulWidget {
+  const DisbursementView({super.key});
 
   @override
-  ConsumerState<StockTransferView> createState() => _StockTransferViewState();
+  ConsumerState<DisbursementView> createState() => _DisbursementViewState();
 }
 
-class _StockTransferViewState extends ConsumerState<StockTransferView> {
-  static const int _headerPageSize = 40;
+class _DisbursementViewState extends ConsumerState<DisbursementView> {
+  static const int _pageSize = 40;
 
   final TextEditingController _searchCtrl = TextEditingController();
   final ScrollController _scrollCtrl = ScrollController();
   Timer? _debounce;
 
-  StockTransferFilter _selectedFilter = StockTransferFilter.requested;
+  DisbursementFilter _selectedFilter = DisbursementFilter.pending;
   String _query = "";
 
   late final ApiClient _api;
-  late final StockTransferRepository _repo;
+  late final DisbursementRepository _repo;
 
   bool _loading = true;
   bool _loadingMore = false;
   bool _hasMore = true;
   String? _error;
 
-  // Cursor is LINE offset, but we page in HEADERS.
-  int _lineCursor = 0;
+  int _rowOffset = 0; // offset in disbursement rows
+  int _rowTotal = 0;
 
-  // Header keys we already rendered (prevents duplicates)
-  final Set<String> _seenOrderNos = <String>{};
+  // Merge-safe row ingest
+  final Set<int> _seenIds = <int>{};
+  final Map<String, List<DisbursementRow>> _rowsByDoc = <String, List<DisbursementRow>>{};
+  final List<String> _docKeys = <String>[];
+  final List<DisbursementApprovalHeader> _headers = <DisbursementApprovalHeader>[];
 
-  // orderNo -> items
-  final Map<String, List<StockTransferRow>> _itemsByOrder = <String, List<StockTransferRow>>{};
-  final List<StockTransferHeader> _headers = <StockTransferHeader>[];
-
-  bool _autoFilling = false;
+  // Lightweight caches for joins (avoid re-fetching names)
+  final Map<int, String> _userNameById = <int, String>{};
+  final Map<int, String> _supplierNameById = <int, String>{};
 
   @override
   void initState() {
     super.initState();
     _api = ref.read(apiClientProvider);
-    _repo = StockTransferRepository(_api);
+    _repo = DisbursementRepository(_api);
 
     _scrollCtrl.addListener(_onScroll);
     _fetchFirstPage();
@@ -71,7 +72,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
     final maxScroll = _scrollCtrl.position.maxScrollExtent;
     final currentScroll = _scrollCtrl.position.pixels;
 
-    if (currentScroll >= maxScroll - 240) {
+    if (currentScroll >= maxScroll - 220) {
       _fetchNextPage();
     }
   }
@@ -95,11 +96,16 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
       _hasMore = true;
       _error = null;
 
-      _lineCursor = 0;
+      _rowOffset = 0;
+      _rowTotal = 0;
 
-      _seenOrderNos.clear();
-      _itemsByOrder.clear();
+      _seenIds.clear();
+      _rowsByDoc.clear();
+      _docKeys.clear();
       _headers.clear();
+
+      _userNameById.clear();
+      _supplierNameById.clear();
     });
 
     _fetchFirstPage();
@@ -112,13 +118,25 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
     });
 
     try {
-      await _fetchHeaderPage(resetCursor: true);
+      // Sales-order behavior: search shows results across all statuses.
+      final st = _query.trim().isNotEmpty ? null : _selectedFilter.statusValue;
+
+      final res = await _repo.fetchDisbursementsPaged(
+        limit: _pageSize,
+        offset: 0,
+        search: _query.isNotEmpty ? _query : null,
+        status: st,
+      );
+
+      await _ingestPage(res);
 
       if (!mounted) return;
-      setState(() => _loading = false);
-
-      // Ensure the list becomes scrollable; otherwise infinite scroll never triggers.
-      _scheduleViewportFill();
+      setState(() {
+        _rowOffset = res.items.length;
+        _rowTotal = res.total;
+        _hasMore = res.hasMore;
+        _loading = false;
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -134,12 +152,24 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
     setState(() => _loadingMore = true);
 
     try {
-      await _fetchHeaderPage(resetCursor: false);
+      final st = _query.trim().isNotEmpty ? null : _selectedFilter.statusValue;
+
+      final res = await _repo.fetchDisbursementsPaged(
+        limit: _pageSize,
+        offset: _rowOffset,
+        search: _query.isNotEmpty ? _query : null,
+        status: st,
+      );
+
+      await _ingestPage(res);
 
       if (!mounted) return;
-      setState(() => _loadingMore = false);
-
-      _scheduleViewportFill();
+      setState(() {
+        _rowOffset += res.items.length;
+        _rowTotal = res.total;
+        _hasMore = res.hasMore;
+        _loadingMore = false;
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -149,263 +179,178 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
     }
   }
 
-  void _scheduleViewportFill() {
-    if (_autoFilling) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) => _autoFillViewportIfNeeded());
-  }
+  Future<void> _ingestPage(PagedResult<Map<String, dynamic>> page) async {
+    final raw = page.items;
+    if (raw.isEmpty) return;
 
-  Future<void> _autoFillViewportIfNeeded() async {
-    if (!mounted) return;
-    if (_autoFilling) return;
-    if (!_hasMore) return;
-    if (_loading || _loadingMore) return;
-    if (!_scrollCtrl.hasClients) return;
+    // Determine which join ids we still need
+    final needUserIds = <int>{};
+    final needSupplierIds = <int>{};
 
-    // If not scrollable yet, keep fetching until it is (or no more data).
-    final pos = _scrollCtrl.position;
-    if (pos.maxScrollExtent > 0) return;
+    for (final m in raw) {
+      final id = asInt(m["id"]);
+      if (id == null || id <= 0) continue;
+      if (_seenIds.contains(id)) continue;
 
-    _autoFilling = true;
-    try {
-      int safety = 0;
-      while (mounted && _hasMore && !_loadingMore && _scrollCtrl.hasClients) {
-        final p = _scrollCtrl.position;
-        if (p.maxScrollExtent > 0) break; // now scrollable
-        if (safety++ > 8) break; // prevent runaway
+      final encoderId = asInt(m["encoder_id"]) ?? 0;
+      final payeeId = asInt(m["payee"]) ?? 0;
 
-        await _fetchNextPage();
-      }
-    } finally {
-      _autoFilling = false;
-    }
-  }
-
-  Future<void> _fetchHeaderPage({required bool resetCursor}) async {
-    final searching = _query.trim().isNotEmpty;
-
-    // Sales-order behavior: when searching, ignore status filter.
-    final status = searching ? null : _selectedFilter.statusValue;
-
-    final page = await _repo.fetchStockTransferHeadersPaged(
-      headerLimit: _headerPageSize,
-      lineOffsetCursor: resetCursor ? 0 : _lineCursor,
-      search: searching ? _query.trim() : null,
-      status: status,
-    );
-
-    // Update cursor/hasMore first.
-    _lineCursor = page.nextLineOffset;
-    _hasMore = page.hasMore;
-
-    if (page.lines.isEmpty || page.orderNos.isEmpty) return;
-
-    // Enrich lines (joins) then merge into headers.
-    await _ingestLinesForHeaders(page.lines, page.orderNos);
-  }
-
-  Future<void> _ingestLinesForHeaders(
-    List<Map<String, dynamic>> rawLines,
-    List<String> orderNos,
-  ) async {
-    // Filter out headers we already have
-    final newOrderNos = orderNos.where((o) => o.trim().isNotEmpty && !_seenOrderNos.contains(o)).toList();
-    if (newOrderNos.isEmpty) return;
-
-    // Collect IDs for joins
-    final productIds = <int>{};
-    final branchIds = <int>{};
-    final userIds = <int>{};
-
-    for (final r in rawLines) {
-      final orderNo = (r["order_no"]?.toString() ?? "").trim();
-      if (!newOrderNos.contains(orderNo)) continue;
-
-      final pid = _asInt(r["product_id"]);
-      if (pid != null) productIds.add(pid);
-
-      final sb = _asInt(r["source_branch"]);
-      if (sb != null) branchIds.add(sb);
-
-      final tb = _asInt(r["target_branch"]);
-      if (tb != null) branchIds.add(tb);
-
-      final enc = _asInt(r["encoder_id"]);
-      if (enc != null) userIds.add(enc);
+      if (encoderId > 0 && !_userNameById.containsKey(encoderId)) needUserIds.add(encoderId);
+      if (payeeId > 0 && !_supplierNameById.containsKey(payeeId)) needSupplierIds.add(payeeId);
     }
 
+    // Fetch joins in parallel (performance)
     final results = await Future.wait([
-      _repo.fetchProductsByIds(productIds.toList()),
-      _repo.fetchBranchesByIds(branchIds.toList()),
-      _repo.fetchUsersByIds(userIds.toList()),
+      needUserIds.isEmpty ? Future.value(const <Map<String, dynamic>>[]) : _repo.fetchUsersByIds(needUserIds.toList()),
+      needSupplierIds.isEmpty ? Future.value(const <Map<String, dynamic>>[]) : _repo.fetchSuppliersByIds(needSupplierIds.toList()),
     ]);
 
-    final products = results[0];
-    final branches = results[1];
-    final users = results[2];
+    final users = results[0];
+    final suppliers = results[1];
 
-    final productNameById = <int, String>{};
-    for (final p in products) {
-      final id = _asInt(p["product_id"]);
-      if (id == null) continue;
-      productNameById[id] = (p["product_name"]?.toString() ?? "Unknown Product").trim();
-    }
-
-    final branchNameById = <int, String>{};
-    for (final b in branches) {
-      final id = _asInt(b["id"]);
-      if (id == null) continue;
-      branchNameById[id] = (b["branch_name"]?.toString() ?? "Unknown").trim();
-    }
-
-    final userNameById = <int, String>{};
     for (final u in users) {
-      final uid = _asInt(u["user_id"]);
-      if (uid == null) continue;
-      if (truthyDeleted(u["is_deleted"])) continue;
+      final uid = asInt(u["user_id"]);
+      if (uid == null || uid <= 0) continue;
 
       final fn = (u["user_fname"]?.toString() ?? "").trim();
+      final mn = (u["user_mname"]?.toString() ?? "").trim();
       final ln = (u["user_lname"]?.toString() ?? "").trim();
-      final name = ("$fn $ln").trim();
-      if (name.isNotEmpty) userNameById[uid] = name;
+      final name = ([fn, mn, ln]..removeWhere((e) => e.trim().isEmpty)).join(" ").trim();
+      if (name.isNotEmpty) _userNameById[uid] = name;
     }
 
-    // Build item lists for each new header
-    for (final orderNo in newOrderNos) {
-      final lines = rawLines.where((m) => (m["order_no"]?.toString() ?? "").trim() == orderNo).toList();
-      if (lines.isEmpty) continue;
+    for (final s in suppliers) {
+      final sid = asInt(s["id"]);
+      if (sid == null || sid <= 0) continue;
 
-      final items = <StockTransferRow>[];
-      for (final m in lines) {
-        final lineId = _asInt(m["id"]) ?? 0;
-        if (lineId <= 0) continue;
+      final name = (s["supplier_name"]?.toString() ?? "").trim();
+      if (name.isNotEmpty) _supplierNameById[sid] = name;
+    }
 
-        final statusEnum = _parseStatus(m["status"]?.toString());
+    // Convert rows and group by doc_no
+    for (final m in raw) {
+      final disbId = asInt(m["id"]) ?? 0;
+      if (disbId <= 0) continue;
+      if (_seenIds.contains(disbId)) continue;
+      _seenIds.add(disbId);
 
-        final pid = _asInt(m["product_id"]);
-        final productName = pid != null ? (productNameById[pid] ?? "Unknown Product") : "Unknown Product";
+      final docNo = (m["doc_no"]?.toString() ?? "").trim();
+      if (docNo.isEmpty) continue;
 
-        final sb = _asInt(m["source_branch"]);
-        final tb = _asInt(m["target_branch"]);
-        final sourceName = sb != null ? (branchNameById[sb] ?? "Unknown") : "Unknown";
-        final targetName = tb != null ? (branchNameById[tb] ?? "Unknown") : "Unknown";
-
-        final orderedQty = _asInt(m["ordered_quantity"]) ?? 0;
-        final receivedQty = _asInt(m["received_quantity"]) ?? 0;
-
-        final requestedAt =
-            _parseDateTime(m["date_requested"]?.toString()) ??
-            _parseDateTime(m["date_encoded"]?.toString()) ??
-            DateTime.fromMillisecondsSinceEpoch(0);
-
-        final enc = _asInt(m["encoder_id"]);
-        final requesterName = enc != null ? (userNameById[enc] ?? "Unknown") : "Unknown";
-
-        final remarks = (m["remarks"]?.toString() ?? "").trim();
-
-        items.add(
-          StockTransferRow(
-            id: lineId,
-            orderNo: orderNo,
-            statusEnum: statusEnum,
-            productName: productName,
-            sourceBranchName: sourceName,
-            targetBranchName: targetName,
-            orderedQty: orderedQty,
-            receivedQty: receivedQty,
-            requestedAt: requestedAt.toLocal(),
-            requesterName: requesterName,
-            remarks: remarks,
-            bossActionBy: null,
-            bossActionAt: null,
-            rejected: false,
-            rejectReason: null,
-          ),
-        );
+      if (!_rowsByDoc.containsKey(docNo)) {
+        _rowsByDoc[docNo] = <DisbursementRow>[];
+        _docKeys.add(docNo);
       }
 
-      if (items.isEmpty) continue;
+      final encoderId = asInt(m["encoder_id"]) ?? 0;
+      final payeeId = asInt(m["payee"]) ?? 0;
 
-      // Save
-      _itemsByOrder[orderNo] = items;
-      _seenOrderNos.add(orderNo);
+      final txDate = parseDateOrIso(m["transaction_date"]?.toString());
+
+      final totalAmount = asDouble(m["total_amount"]);
+      final paidAmount = asDouble(m["paid_amount"]);
+
+      final approverId = asInt(m["approver_id"]);
+      final dateApproved = (m["date_approved"] == null)
+          ? null
+          : parseDateOrIso(m["date_approved"]?.toString());
+
+      _rowsByDoc[docNo]!.add(
+        DisbursementRow(
+          disbursementId: disbId,
+          docNo: docNo,
+          payeeId: payeeId,
+          encoderId: encoderId,
+          transactionDate: txDate,
+          totalAmount: totalAmount,
+          paidAmount: paidAmount,
+          approverId: approverId,
+          dateApproved: dateApproved,
+        ),
+      );
     }
 
-    // Rebuild headers from current map (stable + accurate)
+    _rebuildHeaders();
+  }
+
+  void _rebuildHeaders() {
     _headers
       ..clear()
-      ..addAll(_itemsByOrder.entries.map((e) => _buildHeader(e.key, e.value)));
+      ..addAll(
+        _docKeys.map((docNo) {
+          final rows = _rowsByDoc[docNo] ?? const <DisbursementRow>[];
+          final sorted = [...rows]..sort((a, b) => b.transactionDate.compareTo(a.transactionDate));
 
-    // Sort newest first
-    _headers.sort((a, b) => b.requestedAt.compareTo(a.requestedAt));
+          final txDate = sorted.isEmpty
+              ? DateTime.fromMillisecondsSinceEpoch(0)
+              : sorted.map((e) => e.transactionDate).reduce((a, b) => a.isAfter(b) ? a : b);
 
-    if (mounted) setState(() {});
+          final payeeId = sorted.isEmpty ? 0 : sorted.first.payeeId;
+          final encoderId = sorted.isEmpty ? 0 : sorted.first.encoderId;
+
+          final payeeName = payeeId > 0 ? (_supplierNameById[payeeId] ?? "Unknown") : "Unknown";
+          final encoderName = encoderId > 0 ? (_userNameById[encoderId] ?? "Unknown") : "Unknown";
+
+          final totalAmount = sorted.fold<double>(0.0, (sum, r) => sum + r.totalAmount);
+          final paidAmount = sorted.fold<double>(0.0, (sum, r) => sum + r.paidAmount);
+
+          final status = _deriveDocStatus(sorted);
+
+          return DisbursementApprovalHeader(
+            docNo: docNo,
+            transactionDate: txDate,
+            payeeId: payeeId,
+            payeeName: payeeName,
+            encoderId: encoderId,
+            encoderName: encoderName,
+            totalAmount: totalAmount,
+            paidAmount: paidAmount,
+            status: status,
+            rows: sorted,
+          );
+        }),
+      );
+
+    // Newest first
+    _headers.sort((a, b) => b.transactionDate.compareTo(a.transactionDate));
   }
 
-  StockTransferHeader _buildHeader(String orderNo, List<StockTransferRow> items) {
-    final sorted = [...items]..sort((a, b) => a.productName.compareTo(b.productName));
+  DisbursementStatus _deriveDocStatus(List<DisbursementRow> rows) {
+    if (rows.isEmpty) return DisbursementStatus.pending;
 
-    final requestedAt = sorted.map((e) => e.requestedAt).reduce((a, b) => a.isAfter(b) ? a : b);
+    final allPending = rows.every((r) => r.isPending);
+    if (allPending) return DisbursementStatus.pending;
 
-    final requesterName = sorted.first.requesterName;
-    final sourceBranchName = sorted.first.sourceBranchName;
-    final targetBranchName = sorted.first.targetBranchName;
+    final allApproved = rows.every((r) => r.isApproved);
+    if (allApproved) return DisbursementStatus.approved;
 
-    final status = _deriveHeaderStatus(sorted);
-
-    final totalOrdered = sorted.fold<int>(0, (sum, r) => sum + r.orderedQty);
-    final totalReceived = sorted.fold<int>(0, (sum, r) => sum + r.receivedQty);
-
-    return StockTransferHeader(
-      orderNo: orderNo,
-      statusEnum: status,
-      requestedAt: requestedAt,
-      requesterName: requesterName,
-      sourceBranchName: sourceBranchName,
-      targetBranchName: targetBranchName,
-      items: sorted,
-      totalOrderedQty: totalOrdered,
-      totalReceivedQty: totalReceived,
-      rejected: false,
-      rejectReason: null,
-      bossActionAt: null,
-      bossActionBy: null,
-    );
+    return DisbursementStatus.mixed;
   }
 
-  StockTransferStatus _deriveHeaderStatus(List<StockTransferRow> items) {
-    if (items.isEmpty) return StockTransferStatus.requested;
-    final first = items.first.statusEnum;
-    final allSame = items.every((e) => e.statusEnum == first);
-    return allSame ? first : StockTransferStatus.mixed;
-  }
+  Future<void> _openApprovalModal(DisbursementApprovalHeader header) async {
+    if (!header.isActionable) return;
 
-  Future<void> _openApprovalModal(StockTransferHeader header) async {
-    if (!header.allRequested) return;
-
-    final outcome = await showModalBottomSheet<StockTransferApproveOutcome?>(
+    final outcome = await showModalBottomSheet<DisbursementApproveOutcome?>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => StockTransferApprovalSheet(header: header),
+      builder: (_) => DisbursementApprovalSheet(header: header),
     );
 
     if (outcome == null) return;
 
+    // Refresh cheap + consistent
     _resetAndFetch();
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          "Approved. Created ${outcome.consolidatorNo ?? "CLDTST"} (ID: ${outcome.consolidatorId}).",
-        ),
-      ),
+      SnackBar(content: Text("Approved ${outcome.docNo}.")),
     );
   }
 
   Future<void> _showFilterMenu() async {
-    final selected = await showModalBottomSheet<StockTransferFilter>(
+    final selected = await showModalBottomSheet<DisbursementFilter>(
       context: context,
       useSafeArea: true,
       showDragHandle: true,
@@ -423,7 +368,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
                   style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
                 ),
               ),
-              ...StockTransferFilter.values.map((f) {
+              ...DisbursementFilter.values.map((f) {
                 final isSelected = f == _selectedFilter;
                 return ListTile(
                   leading: Icon(
@@ -453,7 +398,15 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
-    final searching = _query.trim().isNotEmpty;
+
+    // Client-side filter (doc-level) only when not searching.
+    final list = _headers.where((h) {
+      if (_query.trim().isNotEmpty) return true;
+      if (_selectedFilter == DisbursementFilter.all) return true;
+      if (_selectedFilter == DisbursementFilter.pending) return h.status == DisbursementStatus.pending;
+      if (_selectedFilter == DisbursementFilter.approved) return h.status == DisbursementStatus.approved;
+      return true;
+    }).toList();
 
     return Scaffold(
       backgroundColor: cs.surfaceContainerLowest,
@@ -461,8 +414,8 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
         title: const Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text("Stock Transfers", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
-            Text("Approval", style: TextStyle(fontSize: 12)),
+            Text("Disbursements", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
+            Text("Approval Queue", style: TextStyle(fontSize: 12)),
           ],
         ),
       ),
@@ -472,7 +425,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
             child: SearchBar(
               controller: _searchCtrl,
-              hintText: "Search ST #, remarks, product, requester, branch...",
+              hintText: "Search Doc #, supplier, encoder...",
               onChanged: _onSearchChanged,
               leading: const Icon(Icons.search),
               elevation: WidgetStateProperty.all(0),
@@ -502,7 +455,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
                         Icon(Icons.filter_alt_rounded, size: 16, color: cs.onSurfaceVariant),
                         const SizedBox(width: 6),
                         Text(
-                          searching ? "Search Results" : _selectedFilter.label,
+                          _query.trim().isNotEmpty ? "Search Results" : _selectedFilter.label,
                           style: theme.textTheme.labelLarge?.copyWith(
                             fontWeight: FontWeight.w900,
                             color: cs.onSurface,
@@ -516,7 +469,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
                 ),
                 const Spacer(),
                 Text(
-                  _loading ? "Loading..." : "${_headers.length} transfer(s)",
+                  _loading ? "Loading..." : (_rowTotal > 0 ? "${list.length} / $_rowTotal" : "${list.length}"),
                   style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
                 ),
               ],
@@ -530,26 +483,26 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
                     ? _ErrorState(message: _error!, onRetry: _fetchFirstPage)
                     : RefreshIndicator(
                         onRefresh: () async => _resetAndFetch(),
-                        child: _headers.isEmpty
+                        child: list.isEmpty
                             ? ListView(children: [_EmptyState(query: _query)])
                             : ListView.builder(
                                 controller: _scrollCtrl,
                                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                                itemCount: _headers.length + (_loadingMore ? 1 : 0),
+                                itemCount: list.length + (_loadingMore ? 1 : 0),
                                 itemBuilder: (context, i) {
-                                  if (_loadingMore && i == _headers.length) {
+                                  if (_loadingMore && i == list.length) {
                                     return const Padding(
                                       padding: EdgeInsets.symmetric(vertical: 18),
                                       child: Center(child: CircularProgressIndicator()),
                                     );
                                   }
 
-                                  final h = _headers[i];
-                                  final enabled = h.allRequested;
+                                  final h = list[i];
+                                  final enabled = h.isActionable;
 
                                   return Padding(
                                     padding: const EdgeInsets.only(bottom: 12),
-                                    child: _StockTransferCard(
+                                    child: _DisbursementCard(
                                       header: h,
                                       enabled: enabled,
                                       onTap: () => _openApprovalModal(h),
@@ -563,47 +516,18 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
       ),
     );
   }
-
-  StockTransferStatus _parseStatus(String? raw) {
-    final s = (raw ?? "").trim().toLowerCase();
-    final norm = s.replaceAll("_", "").replaceAll(" ", "");
-    if (norm.isEmpty) return StockTransferStatus.requested;
-
-    if (norm == "requested") return StockTransferStatus.requested;
-    if (norm == "forpicking") return StockTransferStatus.forPicking;
-    if (norm == "picking") return StockTransferStatus.picking;
-    if (norm == "picked") return StockTransferStatus.picked;
-    if (norm == "forloading") return StockTransferStatus.forLoading;
-    if (norm == "received") return StockTransferStatus.received;
-
-    return StockTransferStatus.requested;
-  }
-
-  DateTime? _parseDateTime(String? s) {
-    if (s == null) return null;
-    final v = s.trim();
-    if (v.isEmpty) return null;
-    return DateTime.tryParse(v);
-  }
-
-  int? _asInt(Object? v) {
-    if (v == null) return null;
-    if (v is int) return v;
-    if (v is num) return v.toInt();
-    return int.tryParse(v.toString());
-  }
 }
 
 // ------------------------------
-// UI: STOCK TRANSFER CARD (icon removed)
+// UI: Card
 // ------------------------------
 
-class _StockTransferCard extends StatelessWidget {
-  final StockTransferHeader header;
+class _DisbursementCard extends StatelessWidget {
+  final DisbursementApprovalHeader header;
   final bool enabled;
   final VoidCallback onTap;
 
-  const _StockTransferCard({
+  const _DisbursementCard({
     required this.header,
     required this.enabled,
     required this.onTap,
@@ -614,7 +538,9 @@ class _StockTransferCard extends StatelessWidget {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
 
-    final statusColor = stockTransferStatusColor(header.statusEnum, cs);
+    final statusColor = header.status == DisbursementStatus.pending
+        ? cs.primary
+        : (header.status == DisbursementStatus.approved ? Colors.green : cs.outline);
 
     return InkWell(
       onTap: enabled ? onTap : null,
@@ -633,7 +559,7 @@ class _StockTransferCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    header.orderNo,
+                    header.docNo,
                     style: const TextStyle(
                       fontFamily: "monospace",
                       fontWeight: FontWeight.w900,
@@ -644,7 +570,7 @@ class _StockTransferCard extends StatelessWidget {
                   ),
                 ),
                 _Pill(
-                  text: header.statusEnum.label.toUpperCase(),
+                  text: header.status.label.toUpperCase(),
                   bg: statusColor.withOpacity(0.12),
                   fg: statusColor,
                 ),
@@ -652,10 +578,20 @@ class _StockTransferCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              header.routeLabel,
+              "Payee: ${header.payeeName}",
               style: theme.textTheme.bodySmall?.copyWith(
                 color: cs.onSurfaceVariant,
                 fontWeight: FontWeight.w800,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              "Encoder: ${header.encoderName} • Date: ${fmtYmd(header.transactionDate)}",
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: cs.onSurfaceVariant,
+                fontWeight: FontWeight.w700,
               ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -665,32 +601,28 @@ class _StockTransferCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    "${header.items.length} item(s) • ${header.qtyLabel}",
+                    "Total: ${formatMoney(header.totalAmount)}",
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: cs.onSurfaceVariant,
-                      fontWeight: FontWeight.w800,
+                      fontWeight: FontWeight.w900,
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                Text(
+                  "Paid: ${formatMoney(header.paidAmount)}",
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: cs.onSurfaceVariant,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(width: 6),
                 Icon(Icons.chevron_right_rounded, color: cs.onSurfaceVariant),
               ],
-            ),
-            const SizedBox(height: 6),
-            Text(
-              "Requester: ${header.requesterName}",
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: cs.onSurfaceVariant,
-                fontWeight: FontWeight.w700,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
             ),
             if (!enabled) ...[
               const SizedBox(height: 8),
               Text(
-                "Not actionable: items not all in REQUESTED status.",
+                "Not actionable: already approved.",
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: cs.onSurfaceVariant,
                   fontWeight: FontWeight.w700,
@@ -744,7 +676,7 @@ class _EmptyState extends StatelessWidget {
             Icon(Icons.inbox_rounded, size: 64, color: cs.onSurfaceVariant),
             const SizedBox(height: 12),
             Text(
-              query.trim().isEmpty ? "No stock transfers found." : "No results for '$query'.",
+              query.trim().isEmpty ? "No disbursements found." : "No results for '$query'.",
               style: TextStyle(fontWeight: FontWeight.w900, color: cs.onSurface),
               textAlign: TextAlign.center,
             ),
@@ -779,7 +711,10 @@ class _ErrorState extends StatelessWidget {
           children: [
             Icon(Icons.error_outline_rounded, size: 56, color: cs.error),
             const SizedBox(height: 10),
-            Text("Failed to load data", style: TextStyle(fontWeight: FontWeight.w900, color: cs.onSurface)),
+            Text(
+              "Failed to load data",
+              style: TextStyle(fontWeight: FontWeight.w900, color: cs.onSurface),
+            ),
             const SizedBox(height: 10),
             ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 220),
