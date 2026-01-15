@@ -7,18 +7,17 @@ import "../../../data/repositories/disbursement_repository.dart";
 import "disbursement_models.dart";
 
 class DisbursementApprovalSheet extends ConsumerStatefulWidget {
-  const DisbursementApprovalSheet({
-    super.key,
-    required this.header,
-  });
+  const DisbursementApprovalSheet({super.key, required this.header});
 
   final DisbursementHeader header;
 
   @override
-  ConsumerState<DisbursementApprovalSheet> createState() => _DisbursementApprovalSheetState();
+  ConsumerState<DisbursementApprovalSheet> createState() =>
+      _DisbursementApprovalSheetState();
 }
 
-class _DisbursementApprovalSheetState extends ConsumerState<DisbursementApprovalSheet> {
+class _DisbursementApprovalSheetState
+    extends ConsumerState<DisbursementApprovalSheet> {
   bool _loading = true;
   bool _approving = false;
   String? _error;
@@ -54,7 +53,8 @@ class _DisbursementApprovalSheetState extends ConsumerState<DisbursementApproval
       for (final c in coaRows) {
         final id = _asInt(c["coa_id"]);
         if (id == null) continue;
-        coaTitleById[id] = (c["account_title"]?.toString() ?? "Unknown COA").trim();
+        coaTitleById[id] = (c["account_title"]?.toString() ?? "Unknown COA")
+            .trim();
       }
 
       final items = <DisbursementPayableRow>[];
@@ -62,11 +62,14 @@ class _DisbursementApprovalSheetState extends ConsumerState<DisbursementApproval
         final id = _asInt(r["id"]) ?? 0;
         if (id <= 0) continue;
 
-        final payableDate = DateTime.tryParse((r["date"]?.toString() ?? "").trim()) ??
+        final payableDate =
+            DateTime.tryParse((r["date"]?.toString() ?? "").trim()) ??
             DateTime.fromMillisecondsSinceEpoch(0);
 
         final coaId = _asInt(r["coa_id"]) ?? 0;
-        final coaTitle = coaId > 0 ? (coaTitleById[coaId] ?? "Unknown COA") : "Unknown COA";
+        final coaTitle = coaId > 0
+            ? (coaTitleById[coaId] ?? "Unknown COA")
+            : "Unknown COA";
 
         final amount = _asDouble(r["amount"]) ?? 0;
         final remarks = (r["remarks"]?.toString() ?? "").trim();
@@ -118,9 +121,13 @@ class _DisbursementApprovalSheetState extends ConsumerState<DisbursementApproval
       final api = ref.read(apiClientProvider);
       final repo = DisbursementRepository(api);
 
-      final approverId = await ref.read(authRepositoryProvider).getCurrentAppUserId();
+      final approverId = await ref
+          .read(authRepositoryProvider)
+          .getCurrentAppUserId();
       if (approverId == null) {
-        throw Exception("No user session found (user_id missing). Please login again.");
+        throw Exception(
+          "No user session found (user_id missing). Please login again.",
+        );
       }
 
       await repo.approveDisbursement(
@@ -158,7 +165,7 @@ class _DisbursementApprovalSheetState extends ConsumerState<DisbursementApproval
     return Container(
       color: Colors.transparent,
       child: DraggableScrollableSheet(
-        initialChildSize: 0.84,
+        initialChildSize: 0.75,
         minChildSize: 0.55,
         maxChildSize: 0.95,
         builder: (ctx, scrollCtrl) {
@@ -166,17 +173,25 @@ class _DisbursementApprovalSheetState extends ConsumerState<DisbursementApproval
             decoration: BoxDecoration(
               color: cs.surface,
               borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(18),
-                topRight: Radius.circular(18),
+                topLeft: Radius.circular(22),
+                topRight: Radius.circular(22),
               ),
               border: Border.all(color: cs.outlineVariant.withOpacity(0.40)),
+              boxShadow: [
+                BoxShadow(
+                  color: cs.shadow.withOpacity(0.08),
+                  blurRadius: 18,
+                  offset: const Offset(0, -6),
+                ),
+              ],
             ),
             child: Column(
               children: [
+                // Drag handle
                 Padding(
-                  padding: const EdgeInsets.only(top: 10, bottom: 6),
+                  padding: const EdgeInsets.only(top: 10, bottom: 8),
                   child: Container(
-                    width: 44,
+                    width: 48,
                     height: 4,
                     decoration: BoxDecoration(
                       color: cs.onSurfaceVariant.withOpacity(0.35),
@@ -184,21 +199,37 @@ class _DisbursementApprovalSheetState extends ConsumerState<DisbursementApproval
                     ),
                   ),
                 ),
+                // Header
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+                  padding: const EdgeInsets.fromLTRB(18, 2, 10, 12),
                   child: Row(
                     children: [
                       Expanded(
-                        child: Text(
-                          "Approve Disbursement",
-                          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "Disbursement Action",
+                              style: theme.textTheme.titleLarge?.copyWith(
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: -0.2,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              "Review and approve disbursement",
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: cs.onSurfaceVariant,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                       IconButton(
-                        onPressed: () => Navigator.of(context).pop(),
+                        onPressed: () => Navigator.of(context).pop(null),
                         icon: const Icon(Icons.close_rounded),
+                        tooltip: "Close",
                       ),
                     ],
                   ),
@@ -212,79 +243,91 @@ class _DisbursementApprovalSheetState extends ConsumerState<DisbursementApproval
                         _ErrorBanner(message: _error!),
                         const SizedBox(height: 12),
                       ],
-
                       _Card(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            Text(
+                              header.docNo,
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w900,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              header.payeeName,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: cs.onSurfaceVariant,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
                             Row(
                               children: [
                                 Expanded(
-                                  child: Text(
-                                    header.docNo,
-                                    style: const TextStyle(
-                                      fontFamily: "monospace",
-                                      fontWeight: FontWeight.w900,
-                                      fontSize: 16,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
+                                  child: _MiniKV(
+                                    label: "Transaction Date",
+                                    value: fmtYmd(header.transactionDate),
                                   ),
                                 ),
-                                _Pill(
-                                  text: (header.isApproved ? "APPROVED" : "PENDING"),
-                                  bg: statusColor.withOpacity(0.12),
-                                  fg: statusColor,
+                                Expanded(
+                                  child: _MiniKV(
+                                    label: "Total Amount",
+                                    value: money(header.totalAmount),
+                                  ),
                                 ),
                               ],
                             ),
                             const SizedBox(height: 10),
-                            _kv("Payee", header.payeeName),
-                            const SizedBox(height: 6),
-                            _kv("Encoder", header.encoderName),
-                            const SizedBox(height: 6),
-                            _kv("Transaction", fmtYmd(header.transactionDate)),
-                            const SizedBox(height: 6),
-                            _kv("Total Amount", money(header.totalAmount)),
-                            const SizedBox(height: 6),
-                            _kv("Paid Amount", money(header.paidAmount)),
-                            const SizedBox(height: 6),
-                            _kv("Payables Total", money(payablesTotal)),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _MiniKV(
+                                    label: "Paid Amount",
+                                    value: money(header.paidAmount),
+                                  ),
+                                ),
+                                Expanded(
+                                  child: _MiniKV(
+                                    label: "Payables Total",
+                                    value: money(payablesTotal),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            _MiniKV(
+                              label: "Encoder",
+                              value: header.encoderName,
+                            ),
+                            const SizedBox(height: 10),
+                            _MiniKV(
+                              label: "Status",
+                              value: header.isApproved ? "Approved" : "Pending",
+                            ),
                             if (header.remarks.trim().isNotEmpty) ...[
                               const SizedBox(height: 10),
-                              Text(
-                                "Remarks",
-                                style: theme.textTheme.labelLarge?.copyWith(
-                                  fontWeight: FontWeight.w900,
-                                  color: cs.onSurfaceVariant,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(header.remarks),
+                              _MiniKV(label: "Remarks", value: header.remarks),
                             ],
                           ],
                         ),
                       ),
-
                       const SizedBox(height: 14),
-
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              "Payables (${_payables.length})",
-                              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
-                            ),
-                          ),
-                          if (_loading)
-                            Text(
-                              "Loading...",
-                              style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
-                            ),
-                        ],
+                      _SectionHeader(
+                        title: "Payables",
+                        subtitle: "${_payables.length} item(s)",
+                        trailing: _loading
+                            ? Text(
+                                "Loading...",
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: cs.onSurfaceVariant,
+                                ),
+                              )
+                            : null,
                       ),
                       const SizedBox(height: 10),
-
                       if (_loading)
                         const Padding(
                           padding: EdgeInsets.symmetric(vertical: 18),
@@ -294,7 +337,9 @@ class _DisbursementApprovalSheetState extends ConsumerState<DisbursementApproval
                         _Card(
                           child: Text(
                             "No payable lines found.",
-                            style: theme.textTheme.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: cs.onSurfaceVariant,
+                            ),
                           ),
                         )
                       else
@@ -307,7 +352,9 @@ class _DisbursementApprovalSheetState extends ConsumerState<DisbursementApproval
                                 children: [
                                   Text(
                                     p.coaTitle,
-                                    style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w900),
+                                    style: theme.textTheme.titleSmall?.copyWith(
+                                      fontWeight: FontWeight.w900,
+                                    ),
                                   ),
                                   const SizedBox(height: 6),
                                   Text(
@@ -328,10 +375,11 @@ class _DisbursementApprovalSheetState extends ConsumerState<DisbursementApproval
                                     const SizedBox(height: 8),
                                     Text(
                                       "Reference No",
-                                      style: theme.textTheme.labelLarge?.copyWith(
-                                        fontWeight: FontWeight.w900,
-                                        color: cs.onSurfaceVariant,
-                                      ),
+                                      style: theme.textTheme.labelLarge
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w900,
+                                            color: cs.onSurfaceVariant,
+                                          ),
                                     ),
                                     const SizedBox(height: 4),
                                     Text(p.referenceNo),
@@ -340,10 +388,11 @@ class _DisbursementApprovalSheetState extends ConsumerState<DisbursementApproval
                                     const SizedBox(height: 8),
                                     Text(
                                       "Remarks",
-                                      style: theme.textTheme.labelLarge?.copyWith(
-                                        fontWeight: FontWeight.w900,
-                                        color: cs.onSurfaceVariant,
-                                      ),
+                                      style: theme.textTheme.labelLarge
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w900,
+                                            color: cs.onSurfaceVariant,
+                                          ),
                                     ),
                                     const SizedBox(height: 4),
                                     Text(p.remarks),
@@ -356,14 +405,53 @@ class _DisbursementApprovalSheetState extends ConsumerState<DisbursementApproval
                     ],
                   ),
                 ),
+
+                // ACTION BUTTONS
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
-                  child: FilledButton(
-                    onPressed: (widget.header.isApproved || _approving) ? null : _approve,
-                    style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
-                    child: _approving
-                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Text("Approve", style: TextStyle(fontWeight: FontWeight.w900)),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: _approving
+                              ? null
+                              : () => Navigator.of(context).pop(),
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size.fromHeight(48),
+                            side: BorderSide(
+                              color: cs.outlineVariant.withOpacity(0.6),
+                            ),
+                          ),
+                          child: const Text(
+                            "Cancel",
+                            style: TextStyle(fontWeight: FontWeight.w900),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: (widget.header.isApproved || _approving)
+                              ? null
+                              : _approve,
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size.fromHeight(48),
+                          ),
+                          child: _approving
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Text(
+                                  "Approve",
+                                  style: TextStyle(fontWeight: FontWeight.w900),
+                                ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -430,7 +518,10 @@ class _ErrorBanner extends StatelessWidget {
       ),
       child: Text(
         message,
-        style: TextStyle(color: cs.onErrorContainer, fontWeight: FontWeight.w800),
+        style: TextStyle(
+          color: cs.onErrorContainer,
+          fontWeight: FontWeight.w800,
+        ),
       ),
     );
   }
@@ -452,7 +543,95 @@ class _Pill extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: fg.withOpacity(0.25)),
       ),
-      child: Text(text, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: fg)),
+      child: Text(
+        text,
+        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: fg),
+      ),
+    );
+  }
+}
+
+class _SectionHeader extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final Widget? trailing;
+
+  const _SectionHeader({
+    required this.title,
+    required this.subtitle,
+    this.trailing,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -0.2,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                subtitle,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: cs.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (trailing != null) trailing!,
+      ],
+    );
+  }
+}
+
+class _MiniKV extends StatelessWidget {
+  const _MiniKV({required this.label, required this.value, this.valueTone});
+  final String label;
+  final String value;
+  final Color? valueTone;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: cs.onSurfaceVariant,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.2,
+          ),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.bodyMedium?.copyWith(
+            fontWeight: FontWeight.w900,
+            color: valueTone ?? cs.onSurface,
+            letterSpacing: -0.1,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -461,7 +640,10 @@ Widget _kv(String k, String v) {
   return Row(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      SizedBox(width: 120, child: Text(k, style: const TextStyle(fontWeight: FontWeight.w900))),
+      SizedBox(
+        width: 120,
+        child: Text(k, style: const TextStyle(fontWeight: FontWeight.w900)),
+      ),
       Expanded(child: Text(v)),
     ],
   );

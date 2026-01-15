@@ -14,10 +14,12 @@ class DisbursementApprovalView extends ConsumerStatefulWidget {
   const DisbursementApprovalView({super.key});
 
   @override
-  ConsumerState<DisbursementApprovalView> createState() => _DisbursementApprovalViewState();
+  ConsumerState<DisbursementApprovalView> createState() =>
+      _DisbursementApprovalViewState();
 }
 
-class _DisbursementApprovalViewState extends ConsumerState<DisbursementApprovalView> {
+class _DisbursementApprovalViewState
+    extends ConsumerState<DisbursementApprovalView> {
   static const int _pageSize = 40;
 
   final TextEditingController _searchCtrl = TextEditingController();
@@ -60,7 +62,8 @@ class _DisbursementApprovalViewState extends ConsumerState<DisbursementApprovalV
   }
 
   void _onScroll() {
-    if (_loading || _loadingMore || !_hasMore || !_scrollCtrl.hasClients) return;
+    if (_loading || _loadingMore || !_hasMore || !_scrollCtrl.hasClients)
+      return;
     final maxScroll = _scrollCtrl.position.maxScrollExtent;
     final currentScroll = _scrollCtrl.position.pixels;
     if (currentScroll >= maxScroll - 220) {
@@ -191,7 +194,8 @@ class _DisbursementApprovalViewState extends ConsumerState<DisbursementApprovalV
     for (final s in suppliers) {
       final id = _asInt(s["id"]);
       if (id == null) continue;
-      supplierNameById[id] = (s["supplier_name"]?.toString() ?? "Unknown Supplier").trim();
+      supplierNameById[id] =
+          (s["supplier_name"]?.toString() ?? "Unknown Supplier").trim();
     }
 
     final userNameById = <int, String>{};
@@ -205,7 +209,9 @@ class _DisbursementApprovalViewState extends ConsumerState<DisbursementApprovalV
       final fn = (u["user_fname"]?.toString() ?? "").trim();
       final mn = (u["user_mname"]?.toString() ?? "").trim();
       final ln = (u["user_lname"]?.toString() ?? "").trim();
-      final name = ("$fn ${mn.isEmpty ? "" : "$mn "} $ln").replaceAll(RegExp(r"\s+"), " ").trim();
+      final name = ("$fn ${mn.isEmpty ? "" : "$mn "} $ln")
+          .replaceAll(RegExp(r"\s+"), " ")
+          .trim();
       if (name.isNotEmpty) userNameById[uid] = name;
     }
 
@@ -219,13 +225,19 @@ class _DisbursementApprovalViewState extends ConsumerState<DisbursementApprovalV
       final encoderId = _asInt(m["encoder_id"]) ?? 0;
       final payeeId = _asInt(m["payee"]) ?? 0;
 
-      final encoderName = encoderId > 0 ? (userNameById[encoderId] ?? "Unknown") : "Unknown";
-      final payeeName = payeeId > 0 ? (supplierNameById[payeeId] ?? "Unknown") : "Unknown";
+      final encoderName = encoderId > 0
+          ? (userNameById[encoderId] ?? "Unknown")
+          : "Unknown";
+      final payeeName = payeeId > 0
+          ? (supplierNameById[payeeId] ?? "Unknown")
+          : "Unknown";
 
       final totalAmount = _asDouble(m["total_amount"]) ?? 0;
       final paidAmount = _asDouble(m["paid_amount"]) ?? 0;
 
-      final txDate = _parseDate(m["transaction_date"]?.toString()) ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final txDate =
+          _parseDate(m["transaction_date"]?.toString()) ??
+          DateTime.fromMillisecondsSinceEpoch(0);
 
       final approverId = _asInt(m["approver_id"]);
       final dateApproved = _parseDateTime(m["date_approved"]?.toString());
@@ -276,7 +288,11 @@ class _DisbursementApprovalViewState extends ConsumerState<DisbursementApprovalV
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("Approved ${outcome.docNo} (ID: ${outcome.disbursementId}).")),
+      SnackBar(
+        content: Text(
+          "Approved ${outcome.docNo} (ID: ${outcome.disbursementId}).",
+        ),
+      ),
     );
   }
 
@@ -294,18 +310,27 @@ class _DisbursementApprovalViewState extends ConsumerState<DisbursementApprovalV
             children: [
               const Padding(
                 padding: EdgeInsets.fromLTRB(16, 12, 16, 8),
-                child: Text("Filter", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+                child: Text(
+                  "Filter",
+                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                ),
               ),
               ...DisbursementFilter.values.map((f) {
                 final isSelected = f == _selectedFilter;
                 return ListTile(
                   leading: Icon(
-                    isSelected ? Icons.check_circle_rounded : Icons.circle_outlined,
+                    isSelected
+                        ? Icons.check_circle_rounded
+                        : Icons.circle_outlined,
                     color: isSelected ? cs.primary : cs.onSurfaceVariant,
                   ),
                   title: Text(
                     f.label,
-                    style: TextStyle(fontWeight: isSelected ? FontWeight.w900 : FontWeight.w700),
+                    style: TextStyle(
+                      fontWeight: isSelected
+                          ? FontWeight.w900
+                          : FontWeight.w700,
+                    ),
                   ),
                   onTap: () => Navigator.pop(ctx, f),
                 );
@@ -322,114 +347,155 @@ class _DisbursementApprovalViewState extends ConsumerState<DisbursementApprovalV
     _resetAndFetch();
   }
 
+  Widget _buildSearchAndFilterHeader(ColorScheme cs, bool searching) {
+    return Container(
+      color: cs.surface,
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+      child: Column(
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              color: cs.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: TextField(
+              controller: _searchCtrl,
+              onChanged: _onSearchChanged,
+              decoration: InputDecoration(
+                hintText: "Search Doc #, remarks, payee, encoder...",
+                prefixIcon: Icon(
+                  Icons.search_rounded,
+                  color: cs.primary,
+                  size: 20,
+                ),
+                suffixIcon: _searchCtrl.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.cancel, size: 18),
+                        onPressed: () {
+                          _searchCtrl.clear();
+                          _onSearchChanged("");
+                        },
+                      )
+                    : null,
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              GestureDetector(
+                onTap: _showFilterMenu,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: cs.outlineVariant),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.tune_rounded, size: 16, color: cs.primary),
+                      const SizedBox(width: 8),
+                      Text(
+                        searching ? "Search Results" : _selectedFilter.label,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const Icon(Icons.arrow_drop_down),
+                    ],
+                  ),
+                ),
+              ),
+              const Spacer(),
+              if (!_loading)
+                Text(
+                  "${_items.length} item(s)",
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: cs.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
+    final searching = _query.trim().isNotEmpty;
 
     return Scaffold(
       backgroundColor: cs.surfaceContainerLowest,
       appBar: AppBar(
-        title: const Column(
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        backgroundColor: cs.surface,
+        centerTitle: false,
+        title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text("Disbursements", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
-            Text("Approval Queue", style: TextStyle(fontSize: 12)),
+            Text(
+              "Disbursements",
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 24,
+                color: cs.onSurface,
+                letterSpacing: -0.8,
+              ),
+            ),
+            Text(
+              "Manage and approve disbursements",
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: cs.onSurfaceVariant,
+              ),
+            ),
           ],
         ),
       ),
       body: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: SearchBar(
-              controller: _searchCtrl,
-              hintText: "Search Doc #, remarks, payee, encoder...",
-              onChanged: _onSearchChanged,
-              leading: const Icon(Icons.search),
-              elevation: WidgetStateProperty.all(0),
-              backgroundColor: WidgetStateProperty.all(cs.surfaceContainerHigh),
-              shape: WidgetStateProperty.all(
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-            child: Row(
-              children: [
-                InkWell(
-                  onTap: _showFilterMenu,
-                  borderRadius: BorderRadius.circular(999),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: cs.surfaceContainerHigh,
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: cs.outlineVariant.withOpacity(0.5)),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.filter_alt_rounded, size: 16, color: cs.onSurfaceVariant),
-                        const SizedBox(width: 6),
-                        Text(
-                          _selectedFilter.label,
-                          style: theme.textTheme.labelLarge?.copyWith(
-                            fontWeight: FontWeight.w900,
-                            color: cs.onSurface,
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Icon(Icons.expand_more_rounded, size: 18, color: cs.onSurfaceVariant),
-                      ],
-                    ),
-                  ),
-                ),
-                const Spacer(),
-                Text(
-                  _loading ? "Loading..." : (_total > 0 ? "${_items.length} / $_total" : "${_items.length}"),
-                  style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 4),
+          _buildSearchAndFilterHeader(cs, searching),
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : (_error != null)
-                    ? _ErrorState(message: _error!, onRetry: _fetchFirstPage)
-                    : RefreshIndicator(
-                        onRefresh: () async => _resetAndFetch(),
-                        child: _items.isEmpty
-                            ? ListView(children: [_EmptyState(query: _query)])
-                            : ListView.builder(
-                                controller: _scrollCtrl,
-                                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                                itemCount: _items.length + (_loadingMore ? 1 : 0),
-                                itemBuilder: (context, i) {
-                                  if (_loadingMore && i == _items.length) {
-                                    return const Padding(
-                                      padding: EdgeInsets.symmetric(vertical: 18),
-                                      child: Center(child: CircularProgressIndicator()),
-                                    );
-                                  }
+                ? _ErrorState(message: _error!, onRetry: _fetchFirstPage)
+                : RefreshIndicator(
+                    onRefresh: () async => _resetAndFetch(),
+                    child: _items.isEmpty
+                        ? ListView(children: [_EmptyState(query: _query)])
+                        : ListView.builder(
+                            controller: _scrollCtrl,
+                            padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+                            itemCount: _items.length + (_loadingMore ? 1 : 0),
+                            itemBuilder: (context, i) {
+                              if (_loadingMore && i == _items.length) {
+                                return const _LoadingMoreIndicator();
+                              }
+                              final h = _items[i];
+                              final enabled = !h.isApproved;
 
-                                  final h = _items[i];
-                                  final enabled = !h.isApproved;
-
-                                  return Padding(
-                                    padding: const EdgeInsets.only(bottom: 12),
-                                    child: _DisbursementCard(
-                                      header: h,
-                                      enabled: enabled,
-                                      onTap: () => _openApprovalModal(h),
-                                    ),
-                                  );
-                                },
-                              ),
-                      ),
+                              return _DisbursementCard(
+                                header: h,
+                                enabled: enabled,
+                                onTap: () => _openApprovalModal(h),
+                              );
+                            },
+                          ),
+                  ),
           ),
         ],
       ),
@@ -503,91 +569,164 @@ class _DisbursementCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
-
     final statusColor = disbursementStatusColor(header, cs);
 
-    return InkWell(
-      onTap: enabled ? onTap : null,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: cs.surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: cs.outlineVariant.withOpacity(0.45)),
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: cs.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: enabled
+              ? cs.outlineVariant.withOpacity(0.5)
+              : cs.outlineVariant.withOpacity(0.2),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+        boxShadow: [
+          BoxShadow(
+            color: cs.shadow.withOpacity(0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: enabled ? onTap : null,
+          borderRadius: BorderRadius.circular(20),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: Text(
-                    header.docNo,
-                    style: const TextStyle(
-                      fontFamily: "monospace",
-                      fontWeight: FontWeight.w900,
-                      fontSize: 15,
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          header.docNo,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w800,
+                            color: cs.onSurface,
+                          ),
+                        ),
+                        Text(
+                          _formatSimpleDate(header.transactionDate),
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: cs.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                    _StatusBadge(
+                      text: header.isApproved ? "APPROVED" : "PENDING",
+                      color: statusColor,
+                    ),
+                  ],
+                ),
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Divider(height: 1, thickness: 0.5),
+                ),
+                Row(
+                  children: [
+                    Container(
+                      width: 12,
+                      height: 12,
+                      decoration: BoxDecoration(
+                        color: cs.primary,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            header.payeeName,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            "Encoder: ${header.encoderName}",
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: cs.onSurfaceVariant,
+                              fontWeight: FontWeight.w700,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          money(header.totalAmount),
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          "Paid: ${money(header.paidAmount)}",
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: cs.onSurfaceVariant,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                if (enabled)
+                  const Row(
+                    children: [
+                      Text(
+                        "Review",
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blue,
+                        ),
+                      ),
+                      Icon(Icons.chevron_right, size: 16, color: Colors.blue),
+                    ],
                   ),
-                ),
-                _Pill(
-                  text: (header.isApproved ? "APPROVED" : "PENDING"),
-                  bg: statusColor.withOpacity(0.12),
-                  fg: statusColor,
-                ),
               ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              header.payeeName,
-              style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w900),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 6),
-            Text(
-              "Date: ${fmtYmd(header.transactionDate)} • Encoder: ${header.encoderName}",
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: cs.onSurfaceVariant,
-                fontWeight: FontWeight.w800,
-              ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    "Total: ${money(header.totalAmount)} • Paid: ${money(header.paidAmount)}",
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: cs.onSurfaceVariant,
-                      fontWeight: FontWeight.w800,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                Icon(Icons.chevron_right_rounded, color: cs.onSurfaceVariant),
-              ],
-            ),
-            if (!enabled) ...[
-              const SizedBox(height: 8),
-              Text(
-                "Not actionable: already approved.",
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: cs.onSurfaceVariant,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ],
+          ),
         ),
       ),
     );
+  }
+
+  String _formatSimpleDate(DateTime date) {
+    final months = [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
+    ];
+    return "${date.day} ${months[date.month - 1]} • ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}";
   }
 }
 
@@ -615,6 +754,48 @@ class _Pill extends StatelessWidget {
   }
 }
 
+class _LoadingMoreIndicator extends StatelessWidget {
+  const _LoadingMoreIndicator();
+  @override
+  Widget build(BuildContext context) => const Padding(
+    padding: EdgeInsets.symmetric(vertical: 24),
+    child: Center(
+      child: SizedBox(
+        width: 24,
+        height: 24,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      ),
+    ),
+  );
+}
+
+class _StatusBadge extends StatelessWidget {
+  final String text;
+  final Color color;
+  const _StatusBadge({required this.text, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withOpacity(0.2)),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w900,
+          color: color,
+          letterSpacing: 0.5,
+        ),
+      ),
+    );
+  }
+}
+
 class _EmptyState extends StatelessWidget {
   final String query;
   const _EmptyState({required this.query});
@@ -631,8 +812,13 @@ class _EmptyState extends StatelessWidget {
             Icon(Icons.inbox_rounded, size: 64, color: cs.onSurfaceVariant),
             const SizedBox(height: 12),
             Text(
-              query.trim().isEmpty ? "No disbursements found." : "No results for '$query'.",
-              style: TextStyle(fontWeight: FontWeight.w900, color: cs.onSurface),
+              query.trim().isEmpty
+                  ? "No disbursements found."
+                  : "No results for '$query'.",
+              style: TextStyle(
+                fontWeight: FontWeight.w900,
+                color: cs.onSurface,
+              ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 6),
@@ -666,7 +852,13 @@ class _ErrorState extends StatelessWidget {
           children: [
             Icon(Icons.error_outline_rounded, size: 56, color: cs.error),
             const SizedBox(height: 10),
-            Text("Failed to load data", style: TextStyle(fontWeight: FontWeight.w900, color: cs.onSurface)),
+            Text(
+              "Failed to load data",
+              style: TextStyle(
+                fontWeight: FontWeight.w900,
+                color: cs.onSurface,
+              ),
+            ),
             const SizedBox(height: 10),
             ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 220),

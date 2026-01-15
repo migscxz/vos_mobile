@@ -1,5 +1,6 @@
 // lib/modules/approvals/overtime/overtime_view.dart
 import "dart:async";
+
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 
@@ -12,7 +13,8 @@ class OvertimeApprovalView extends ConsumerStatefulWidget {
   const OvertimeApprovalView({super.key});
 
   @override
-  ConsumerState<OvertimeApprovalView> createState() => _OvertimeApprovalViewState();
+  ConsumerState<OvertimeApprovalView> createState() =>
+      _OvertimeApprovalViewState();
 }
 
 class _OvertimeApprovalViewState extends ConsumerState<OvertimeApprovalView> {
@@ -150,7 +152,8 @@ class _OvertimeApprovalViewState extends ConsumerState<OvertimeApprovalView> {
       showDragHandle: true,
       builder: (ctx) {
         final cs = Theme.of(ctx).colorScheme;
-        final visible = OvertimeFilter.values.toList(); // includes All + Cancelled if in enum
+        final visible = OvertimeFilter.values
+            .toList(); // includes All + Cancelled if in enum
         return Material(
           color: cs.surface,
           child: ListView(
@@ -167,12 +170,18 @@ class _OvertimeApprovalViewState extends ConsumerState<OvertimeApprovalView> {
                 final isSelected = f == _selectedFilter;
                 return ListTile(
                   leading: Icon(
-                    isSelected ? Icons.check_circle_rounded : Icons.circle_outlined,
+                    isSelected
+                        ? Icons.check_circle_rounded
+                        : Icons.circle_outlined,
                     color: isSelected ? cs.primary : cs.onSurfaceVariant,
                   ),
                   title: Text(
                     f.label,
-                    style: TextStyle(fontWeight: isSelected ? FontWeight.w900 : FontWeight.w700),
+                    style: TextStyle(
+                      fontWeight: isSelected
+                          ? FontWeight.w900
+                          : FontWeight.w700,
+                    ),
                   ),
                   onTap: () => Navigator.pop(ctx, f),
                 );
@@ -216,122 +225,177 @@ class _OvertimeApprovalViewState extends ConsumerState<OvertimeApprovalView> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
+  Widget _buildSearchAndFilterHeader(ColorScheme cs, bool searching) {
+    return Container(
+      color: cs.surface,
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+      child: Column(
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              color: cs.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: TextField(
+              controller: _searchCtrl,
+              onChanged: _onSearchChanged,
+              decoration: InputDecoration(
+                hintText: "Search employee, department, purpose, date...",
+                prefixIcon: Icon(
+                  Icons.search_rounded,
+                  color: cs.primary,
+                  size: 20,
+                ),
+                suffixIcon: _searchCtrl.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.cancel, size: 18),
+                        onPressed: () {
+                          _searchCtrl.clear();
+                          _onSearchChanged("");
+                        },
+                      )
+                    : null,
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              GestureDetector(
+                onTap: _showFilterMenu,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: cs.outlineVariant),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.tune_rounded, size: 16, color: cs.primary),
+                      const SizedBox(width: 8),
+                      Text(
+                        searching ? "Search Results" : _selectedFilter.label,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const Icon(Icons.arrow_drop_down),
+                    ],
+                  ),
+                ),
+              ),
+              const Spacer(),
+              if (!_loading)
+                Text(
+                  "${_items.length} request(s)",
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: cs.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
+    final searching = _query.trim().isNotEmpty;
 
     return Scaffold(
       backgroundColor: cs.surfaceContainerLowest,
       appBar: AppBar(
-        title: const Column(
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        backgroundColor: cs.surface,
+        centerTitle: false,
+        title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text("Overtime", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
-            Text("Approval", style: TextStyle(fontSize: 12)),
+            Text(
+              "Overtime",
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 24,
+                color: cs.onSurface,
+                letterSpacing: -0.8,
+              ),
+            ),
+            Text(
+              "Manage and approve overtime requests",
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: cs.onSurfaceVariant,
+              ),
+            ),
           ],
         ),
       ),
       body: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: SearchBar(
-              controller: _searchCtrl,
-              hintText: "Search employee, department, purpose, date...",
-              onChanged: _onSearchChanged,
-              leading: const Icon(Icons.search),
-              elevation: WidgetStateProperty.all(0),
-              backgroundColor: WidgetStateProperty.all(cs.surfaceContainerHigh),
-              shape: WidgetStateProperty.all(
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-            child: Row(
-              children: [
-                InkWell(
-                  onTap: _showFilterMenu,
-                  borderRadius: BorderRadius.circular(999),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: cs.surfaceContainerHigh,
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: cs.outlineVariant.withOpacity(0.5)),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.filter_alt_rounded, size: 16, color: cs.onSurfaceVariant),
-                        const SizedBox(width: 6),
-                        Text(
-                          _selectedFilter.label,
-                          style: theme.textTheme.labelLarge?.copyWith(
-                            fontWeight: FontWeight.w900,
-                            color: cs.onSurface,
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Icon(Icons.expand_more_rounded, size: 18, color: cs.onSurfaceVariant),
-                      ],
-                    ),
-                  ),
-                ),
-                const Spacer(),
-                Text(
-                  "${_items.length} request(s)",
-                  style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 4),
+          _buildSearchAndFilterHeader(cs, searching),
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : (_error != null)
-                    ? _ErrorState(message: _error!, onRetry: _reload)
-                    : RefreshIndicator(
-                        onRefresh: _reload,
-                        child: _items.isEmpty
-                            ? ListView(children: [_EmptyState(query: _query)])
-                            : ListView.builder(
-                                controller: _scrollCtrl,
-                                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                                itemCount: _items.length + 1,
-                                itemBuilder: (context, i) {
-                                  if (i == _items.length) {
-                                    return Padding(
-                                      padding: const EdgeInsets.only(top: 8, bottom: 24),
-                                      child: Center(
-                                        child: _loadingMore
-                                            ? const SizedBox(
-                                                width: 22,
-                                                height: 22,
-                                                child: CircularProgressIndicator(strokeWidth: 2),
-                                              )
-                                            : (!_hasMore ? const Text("— end —") : const SizedBox.shrink()),
-                                      ),
-                                    );
-                                  }
+                ? _ErrorState(message: _error!, onRetry: _reload)
+                : RefreshIndicator(
+                    onRefresh: _reload,
+                    child: _items.isEmpty
+                        ? ListView(children: [_EmptyState(query: _query)])
+                        : ListView.builder(
+                            controller: _scrollCtrl,
+                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                            itemCount: _items.length + 1,
+                            itemBuilder: (context, i) {
+                              if (i == _items.length) {
+                                return Padding(
+                                  padding: const EdgeInsets.only(
+                                    top: 8,
+                                    bottom: 24,
+                                  ),
+                                  child: Center(
+                                    child: _loadingMore
+                                        ? const SizedBox(
+                                            width: 22,
+                                            height: 22,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          )
+                                        : (!_hasMore
+                                              ? const Text("— end —")
+                                              : const SizedBox.shrink()),
+                                  ),
+                                );
+                              }
 
-                                  final row = _items[i];
-                                  final enabled = row.isPending;
+                              final row = _items[i];
+                              final enabled = row.isPending;
 
-                                  return Padding(
-                                    padding: const EdgeInsets.only(bottom: 12),
-                                    child: _OvertimeCard(
-                                      header: row,
-                                      enabled: enabled,
-                                      onTap: () => _openApprovalModal(row),
-                                    ),
-                                  );
-                                },
-                              ),
-                      ),
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 12),
+                                child: _OvertimeCard(
+                                  header: row,
+                                  enabled: enabled,
+                                  onTap: () => _openApprovalModal(row),
+                                ),
+                              );
+                            },
+                          ),
+                  ),
           ),
         ],
       ),
@@ -357,110 +421,164 @@ class _OvertimeCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
-
     final statusColor = _statusColor(header.status, cs);
 
-    return InkWell(
-      onTap: enabled ? onTap : null,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: cs.surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: cs.outlineVariant.withOpacity(0.45)),
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: cs.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: enabled
+              ? cs.outlineVariant.withOpacity(0.5)
+              : cs.outlineVariant.withOpacity(0.2),
         ),
-        child: Row(
-          children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: cs.surfaceContainerHigh,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: cs.outlineVariant.withOpacity(0.45)),
-              ),
-              child: Icon(Icons.timer_rounded, color: cs.primary),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
+        boxShadow: [
+          BoxShadow(
+            color: cs.shadow.withOpacity(0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: enabled ? onTap : null,
+          borderRadius: BorderRadius.circular(20),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
                           header.employeeName,
-                          style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w900),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w800,
+                            color: cs.onSurface,
+                          ),
                         ),
-                      ),
-                      _Pill(
-                        text: header.status.label.toUpperCase(),
-                        bg: statusColor.withOpacity(0.12),
-                        fg: statusColor,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    "${header.departmentName} • ${header.requestDateLabel}",
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: cs.onSurfaceVariant,
-                      fontWeight: FontWeight.w800,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          "${header.timeRangeLabel} • ${header.durationLabel}",
+                        Text(
+                          _formatSimpleDate(header.requestDateLabel),
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: cs.onSurfaceVariant,
-                            fontWeight: FontWeight.w800,
                           ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
                         ),
-                      ),
-                      if (enabled) ...[
-                        const SizedBox(width: 8),
-                        Icon(Icons.chevron_right_rounded, color: cs.onSurfaceVariant),
                       ],
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    header.purpose.trim().isEmpty ? "—" : header.purpose,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: cs.onSurfaceVariant,
-                      fontWeight: FontWeight.w700,
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  if (!enabled) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      "Not actionable: request is not pending.",
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: cs.onSurfaceVariant,
-                        fontWeight: FontWeight.w700,
-                      ),
+                    _StatusBadge(
+                      text: header.status.label.toUpperCase(),
+                      color: statusColor,
                     ),
                   ],
-                ],
-              ),
+                ),
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Divider(height: 1, thickness: 0.5),
+                ),
+                Row(
+                  children: [
+                    Container(
+                      width: 12,
+                      height: 12,
+                      decoration: BoxDecoration(
+                        color: cs.primary,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            header.departmentName,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            "${header.timeRangeLabel} • ${header.durationLabel}",
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: cs.onSurfaceVariant,
+                              fontWeight: FontWeight.w700,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (enabled)
+                      const Row(
+                        children: [
+                          Text(
+                            "Review",
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue,
+                            ),
+                          ),
+                          Icon(
+                            Icons.chevron_right,
+                            size: 16,
+                            color: Colors.blue,
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  header.purpose.trim().isEmpty ? "—" : header.purpose,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: cs.onSurfaceVariant,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
+  }
+
+  String _formatSimpleDate(String dateStr) {
+    // Simple date formatting, assuming dateStr is in a parseable format
+    try {
+      final date = DateTime.parse(dateStr);
+      final months = [
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+      ];
+      return "${date.day} ${months[date.month - 1]} • ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}";
+    } catch (e) {
+      return dateStr;
+    }
   }
 
   static Color _statusColor(OvertimeStatus s, ColorScheme cs) {
@@ -503,6 +621,33 @@ class _Pill extends StatelessWidget {
   }
 }
 
+class _StatusBadge extends StatelessWidget {
+  final String text;
+  final Color color;
+  const _StatusBadge({required this.text, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withOpacity(0.2)),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w900,
+          color: color,
+          letterSpacing: 0.5,
+        ),
+      ),
+    );
+  }
+}
+
 class _EmptyState extends StatelessWidget {
   final String query;
   const _EmptyState({required this.query});
@@ -519,8 +664,13 @@ class _EmptyState extends StatelessWidget {
             Icon(Icons.inbox_rounded, size: 64, color: cs.onSurfaceVariant),
             const SizedBox(height: 12),
             Text(
-              query.trim().isEmpty ? "No overtime requests found." : "No results for '$query'.",
-              style: TextStyle(fontWeight: FontWeight.w900, color: cs.onSurface),
+              query.trim().isEmpty
+                  ? "No overtime requests found."
+                  : "No results for '$query'.",
+              style: TextStyle(
+                fontWeight: FontWeight.w900,
+                color: cs.onSurface,
+              ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 6),
@@ -556,7 +706,10 @@ class _ErrorState extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               "Failed to load data",
-              style: TextStyle(fontWeight: FontWeight.w900, color: cs.onSurface),
+              style: TextStyle(
+                fontWeight: FontWeight.w900,
+                color: cs.onSurface,
+              ),
             ),
             const SizedBox(height: 10),
             SelectableText(

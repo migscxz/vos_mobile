@@ -7,23 +7,25 @@ import "../../../data/repositories/overtime_repository.dart";
 import "overtime_models.dart";
 
 class OvertimeApprovalSheet extends ConsumerStatefulWidget {
-  const OvertimeApprovalSheet({
-    super.key,
-    required this.header,
-  });
+  const OvertimeApprovalSheet({super.key, required this.header});
 
   final OvertimeApprovalHeader header;
 
   @override
-  ConsumerState<OvertimeApprovalSheet> createState() => _OvertimeApprovalSheetState();
+  ConsumerState<OvertimeApprovalSheet> createState() =>
+      _OvertimeApprovalSheetState();
 }
 
 class _OvertimeApprovalSheetState extends ConsumerState<OvertimeApprovalSheet> {
   bool _processing = false;
   String? _error;
 
-  Future<_ApproverInfo> _loadApproverInfo(OvertimeRepository overtimeRepo) async {
-    final approverIdRaw = await ref.read(authRepositoryProvider).getCurrentAppUserId();
+  Future<_ApproverInfo> _loadApproverInfo(
+    OvertimeRepository overtimeRepo,
+  ) async {
+    final approverIdRaw = await ref
+        .read(authRepositoryProvider)
+        .getCurrentAppUserId();
 
     if (approverIdRaw == null) {
       throw Exception("Invalid approverId from authRepositoryProvider: null");
@@ -34,11 +36,13 @@ class _OvertimeApprovalSheetState extends ConsumerState<OvertimeApprovalSheet> {
         : int.tryParse(approverIdRaw.toString()) ?? 0;
 
     if (approverId <= 0) {
-      throw Exception("Invalid approverId from authRepositoryProvider: $approverIdRaw");
+      throw Exception(
+        "Invalid approverId from authRepositoryProvider: $approverIdRaw",
+      );
     }
 
-    final Map<int, AppUserLite> approverMap =
-        await overtimeRepo.fetchUsersByIds(<int>[approverId]);
+    final Map<int, AppUserLite> approverMap = await overtimeRepo
+        .fetchUsersByIds(<int>[approverId]);
 
     final String approverName =
         approverMap[approverId]?.displayName ?? "Unknown Approver";
@@ -93,8 +97,14 @@ class _OvertimeApprovalSheetState extends ConsumerState<OvertimeApprovalSheet> {
         title: const Text("Reject Overtime?"),
         content: const Text("This will mark the request as rejected."),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Reject")),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("Cancel"),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text("Reject"),
+          ),
         ],
       ),
     );
@@ -144,18 +154,25 @@ class _OvertimeApprovalSheetState extends ConsumerState<OvertimeApprovalSheet> {
     return Container(
       color: Colors.transparent,
       child: DraggableScrollableSheet(
-        initialChildSize: 0.72,
+        initialChildSize: 0.75,
         minChildSize: 0.55,
-        maxChildSize: 0.92,
+        maxChildSize: 0.95,
         builder: (ctx, scrollCtrl) {
           return Container(
             decoration: BoxDecoration(
               color: cs.surface,
               borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(18),
-                topRight: Radius.circular(18),
+                topLeft: Radius.circular(22),
+                topRight: Radius.circular(22),
               ),
               border: Border.all(color: cs.outlineVariant.withOpacity(0.40)),
+              boxShadow: [
+                BoxShadow(
+                  color: cs.shadow.withOpacity(0.08),
+                  blurRadius: 18,
+                  offset: const Offset(0, -6),
+                ),
+              ],
             ),
             child: Column(
               children: [
@@ -177,7 +194,9 @@ class _OvertimeApprovalSheetState extends ConsumerState<OvertimeApprovalSheet> {
                       Expanded(
                         child: Text(
                           "Overtime Action",
-                          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w900,
+                          ),
                         ),
                       ),
                       IconButton(
@@ -202,7 +221,9 @@ class _OvertimeApprovalSheetState extends ConsumerState<OvertimeApprovalSheet> {
                           children: [
                             Text(
                               h.employeeName,
-                              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w900,
+                              ),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -217,19 +238,42 @@ class _OvertimeApprovalSheetState extends ConsumerState<OvertimeApprovalSheet> {
                             const SizedBox(height: 12),
                             Row(
                               children: [
-                                Expanded(child: _MiniKV(label: "Request Date", value: h.requestDateLabel)),
-                                Expanded(child: _MiniKV(label: "Filed At", value: h.filedAtLabel)),
+                                Expanded(
+                                  child: _MiniKV(
+                                    label: "Request Date",
+                                    value: h.requestDateLabel,
+                                  ),
+                                ),
+                                Expanded(
+                                  child: _MiniKV(
+                                    label: "Filed At",
+                                    value: h.filedAtLabel,
+                                  ),
+                                ),
                               ],
                             ),
                             const SizedBox(height: 10),
                             Row(
                               children: [
-                                Expanded(child: _MiniKV(label: "OT Time", value: h.timeRangeLabel)),
-                                Expanded(child: _MiniKV(label: "Duration", value: h.durationLabel)),
+                                Expanded(
+                                  child: _MiniKV(
+                                    label: "OT Time",
+                                    value: h.timeRangeLabel,
+                                  ),
+                                ),
+                                Expanded(
+                                  child: _MiniKV(
+                                    label: "Duration",
+                                    value: h.durationLabel,
+                                  ),
+                                ),
                               ],
                             ),
                             const SizedBox(height: 10),
-                            _MiniKV(label: "Purpose", value: h.purpose.trim().isEmpty ? "—" : h.purpose),
+                            _MiniKV(
+                              label: "Purpose",
+                              value: h.purpose.trim().isEmpty ? "—" : h.purpose,
+                            ),
                             const SizedBox(height: 10),
                             _MiniKV(label: "Status", value: h.status.label),
                           ],
@@ -255,11 +299,16 @@ class _OvertimeApprovalSheetState extends ConsumerState<OvertimeApprovalSheet> {
                               ? const SizedBox(
                                   width: 20,
                                   height: 20,
-                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
                                 )
                               : Text(
                                   "Reject",
-                                  style: TextStyle(fontWeight: FontWeight.w900, color: cs.error),
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w900,
+                                    color: cs.error,
+                                  ),
                                 ),
                         ),
                       ),
@@ -267,12 +316,16 @@ class _OvertimeApprovalSheetState extends ConsumerState<OvertimeApprovalSheet> {
                       Expanded(
                         child: FilledButton(
                           onPressed: _processing ? null : _approve,
-                          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size.fromHeight(48),
+                          ),
                           child: _processing
                               ? const SizedBox(
                                   width: 20,
                                   height: 20,
-                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
                                 )
                               : const Text(
                                   "Approve",
@@ -298,21 +351,34 @@ class _ApproverInfo {
   const _ApproverInfo({required this.id, required this.name});
 }
 
-// --- UI helpers unchanged ---
+// =====================
+// Small UI (Revised)
+// =====================
+
 class _Card extends StatelessWidget {
-  const _Card({required this.child});
+  const _Card({required this.child, this.padding = const EdgeInsets.all(12)});
+
   final Widget child;
+  final EdgeInsets padding;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(12),
+      padding: padding,
       decoration: BoxDecoration(
-        color: cs.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: cs.outlineVariant.withOpacity(0.35)),
+        color: cs.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: cs.outlineVariant.withOpacity(0.42)),
+        boxShadow: [
+          BoxShadow(
+            color: cs.shadow.withOpacity(0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
       child: child,
     );
@@ -335,7 +401,10 @@ class _ErrorBanner extends StatelessWidget {
       ),
       child: Text(
         message,
-        style: TextStyle(color: cs.onErrorContainer, fontWeight: FontWeight.w800),
+        style: TextStyle(
+          color: cs.onErrorContainer,
+          fontWeight: FontWeight.w800,
+        ),
       ),
     );
   }
