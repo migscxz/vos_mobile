@@ -1,0 +1,1 @@
+- [x] Change search bar background color to gray in stock_transfer_view.dart for better visibility

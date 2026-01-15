@@ -140,93 +140,195 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
     setState(() {});
   }
 
+  int get _totalPending =>
+      _requestedCount + _soForApprovalCount + _otPendingCount + _dbPendingCount;
+
+  bool get _hasErrors =>
+      _stError != null || _soError != null || _otError != null || _dbError != null;
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
 
     return Scaffold(
       backgroundColor: cs.surfaceContainerLowest,
       body: SafeArea(
         child: RefreshIndicator(
           onRefresh: _loadCounts,
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-            children: [
-              // mwa mwa I love you (requested) — kept as a harmless comment; not shown to users.
-
-              if (_stError != null) ...[
-                _InlineError(message: "Stock Transfer: $_stError"),
-                const SizedBox(height: 12),
-              ],
-              if (_soError != null) ...[
-                _InlineError(message: "Sales Order: $_soError"),
-                const SizedBox(height: 12),
-              ],
-              if (_otError != null) ...[
-                _InlineError(message: "Overtime: $_otError"),
-                const SizedBox(height: 12),
-              ],
-              if (_dbError != null) ...[
-                _InlineError(message: "Disbursement: $_dbError"),
-                const SizedBox(height: 12),
-              ],
-
-              _ApprovalCardWithBadge(
-                title: "Stock Transfer",
-                subtitle: "Tap to review Requested stock transfers",
-                icon: Icons.swap_horiz_rounded,
-                loading: _stLoading,
-                badgeCount: _requestedCount,
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const StockTransferView()),
-                  );
-                },
+          child: CustomScrollView(
+            slivers: [
+              // Header Section
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(25, 5, 50, 5),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Text(
+                      //   "",
+                      //   style: theme.textTheme.headlineMedium?.copyWith(
+                      //     fontWeight: FontWeight.w700,
+                      //     letterSpacing: -0.5,
+                      //   ),
+                      // ),
+                      const SizedBox(height: 8),
+                      if (_stLoading || _soLoading || _otLoading || _dbLoading)
+                        Row(
+                          children: [
+                            SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: cs.primary,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              "Refreshing counts...",
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: cs.onSurfaceVariant,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        )
+                      else
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: _totalPending > 0
+                                    ? cs.primaryContainer
+                                    : cs.surfaceContainerHigh,
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    _totalPending > 0
+                                        ? Icons.notification_important_rounded
+                                        : Icons.check_circle_outline_rounded,
+                                    size: 16,
+                                    color: _totalPending > 0
+                                        ? cs.onPrimaryContainer
+                                        : cs.onSurfaceVariant,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    _totalPending > 0
+                                        ? "$_totalPending pending approval${_totalPending > 1 ? 's' : ''}"
+                                        : "All caught up",
+                                    style: theme.textTheme.labelMedium?.copyWith(
+                                      color: _totalPending > 0
+                                          ? cs.onPrimaryContainer
+                                          : cs.onSurfaceVariant,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                    ],
+                  ),
+                ),
               ),
 
-              const SizedBox(height: 12),
+              // Error Messages
+              if (_hasErrors)
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                    child: Column(
+                      children: [
+                        if (_stError != null) _InlineError(message: "Stock Transfer: $_stError"),
+                        if (_stError != null && (_soError != null || _otError != null || _dbError != null))
+                          const SizedBox(height: 8),
+                        if (_soError != null) _InlineError(message: "Sales Order: $_soError"),
+                        if (_soError != null && (_otError != null || _dbError != null))
+                          const SizedBox(height: 8),
+                        if (_otError != null) _InlineError(message: "Overtime: $_otError"),
+                        if (_otError != null && _dbError != null) const SizedBox(height: 8),
+                        if (_dbError != null) _InlineError(message: "Disbursement: $_dbError"),
+                      ],
+                    ),
+                  ),
+                ),
 
-              _ApprovalCardWithBadge(
-                title: "Sales Orders",
-                subtitle: "Tap to review Sales Orders for approval",
-                icon: Icons.receipt_long_rounded,
-                loading: _soLoading,
-                badgeCount: _soForApprovalCount,
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const SalesOrderApprovalView()),
-                  );
-                },
-              ),
-
-              const SizedBox(height: 12),
-
-              _ApprovalCardWithBadge(
-                title: "Overtime",
-                subtitle: "Tap to review Overtime requests (Pending)",
-                icon: Icons.timer_rounded,
-                loading: _otLoading,
-                badgeCount: _otPendingCount,
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const OvertimeApprovalView()),
-                  );
-                },
-              ),
-
-              const SizedBox(height: 12),
-
-              _ApprovalCardWithBadge(
-                title: "Disbursement",
-                subtitle: "Tap to review Disbursement approvals (Pending)",
-                icon: Icons.payments_rounded,
-                loading: _dbLoading,
-                badgeCount: _dbPendingCount,
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const DisbursementApprovalView()),
-                  );
-                },
+              // Approval Cards
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+                sliver: SliverList(
+                  delegate: SliverChildListDelegate([
+                    _ApprovalCard(
+                      title: "Stock Transfer",
+                      subtitle: "Review requested stock transfers",
+                      icon: Icons.swap_horiz_rounded,
+                      iconColor: const Color(0xFF6366F1),
+                      iconBackground: const Color(0xFFEEF2FF),
+                      loading: _stLoading,
+                      badgeCount: _requestedCount,
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(builder: (_) => const StockTransferView()),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    _ApprovalCard(
+                      title: "Sales Orders",
+                      subtitle: "Review sales orders awaiting approval",
+                      icon: Icons.receipt_long_rounded,
+                      iconColor: const Color(0xFF8B5CF6),
+                      iconBackground: const Color(0xFFF5F3FF),
+                      loading: _soLoading,
+                      badgeCount: _soForApprovalCount,
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(builder: (_) => const SalesOrderApprovalView()),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    _ApprovalCard(
+                      title: "Overtime",
+                      subtitle: "Review pending overtime requests",
+                      icon: Icons.schedule_rounded,
+                      iconColor: const Color(0xFF06B6D4),
+                      iconBackground: const Color(0xFFECFEFF),
+                      loading: _otLoading,
+                      badgeCount: _otPendingCount,
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(builder: (_) => const OvertimeApprovalView()),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    _ApprovalCard(
+                      title: "Disbursement",
+                      subtitle: "Review pending disbursement approvals",
+                      icon: Icons.payments_rounded,
+                      iconColor: const Color(0xFF10B981),
+                      iconBackground: const Color(0xFFECFDF5),
+                      loading: _dbLoading,
+                      badgeCount: _dbPendingCount,
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(builder: (_) => const DisbursementApprovalView()),
+                        );
+                      },
+                    ),
+                  ]),
+                ),
               ),
             ],
           ),
@@ -243,36 +345,58 @@ class _InlineError extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: cs.errorContainer,
         borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        message,
-        style: TextStyle(
-          color: cs.onErrorContainer,
-          fontWeight: FontWeight.w700,
+        border: Border.all(
+          color: cs.error.withOpacity(0.2),
+          width: 1,
         ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.error_outline_rounded,
+            color: cs.error,
+            size: 20,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              message,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: cs.onErrorContainer,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-class _ApprovalCardWithBadge extends StatelessWidget {
+class _ApprovalCard extends StatelessWidget {
   final String title;
   final String subtitle;
   final IconData icon;
+  final Color iconColor;
+  final Color iconBackground;
   final bool loading;
   final int badgeCount;
   final VoidCallback onTap;
 
-  const _ApprovalCardWithBadge({
+  const _ApprovalCard({
     required this.title,
     required this.subtitle,
     required this.icon,
+    required this.iconColor,
+    required this.iconBackground,
     required this.loading,
     required this.badgeCount,
     required this.onTap,
@@ -283,130 +407,157 @@ class _ApprovalCardWithBadge extends StatelessWidget {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
 
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(14),
-          child: Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: cs.surface,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: cs.outlineVariant.withOpacity(0.45)),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Ink(
+          decoration: BoxDecoration(
+            color: cs.surface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: cs.outlineVariant.withOpacity(0.5),
+              width: 1,
             ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.03),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
             child: Row(
               children: [
+                // Icon Container
                 Container(
-                  width: 44,
-                  height: 44,
+                  width: 56,
+                  height: 56,
                   decoration: BoxDecoration(
-                    color: cs.surfaceContainerHigh,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: cs.outlineVariant.withOpacity(0.45),
-                    ),
+                    color: iconBackground,
+                    borderRadius: BorderRadius.circular(14),
                   ),
-                  child: Icon(icon, color: cs.primary),
+                  child: Icon(
+                    icon,
+                    color: iconColor,
+                    size: 28,
+                  ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 16),
+
+                // Content
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        title,
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w900,
-                        ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              title,
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: -0.2,
+                              ),
+                            ),
+                          ),
+                          if (!loading && badgeCount > 0)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: cs.primaryContainer,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                badgeCount > 99 ? "99+" : "$badgeCount",
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: cs.onPrimaryContainer,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
-                      const SizedBox(height: 2),
+                      const SizedBox(height: 4),
                       Text(
                         subtitle,
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: cs.onSurfaceVariant,
-                          fontWeight: FontWeight.w700,
+                          fontWeight: FontWeight.w500,
+                          height: 1.4,
                         ),
                       ),
                       const SizedBox(height: 8),
                       if (loading)
-                        Text(
-                          "Loading count...",
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: cs.onSurfaceVariant,
-                          ),
+                        Row(
+                          children: [
+                            SizedBox(
+                              width: 12,
+                              height: 12,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: cs.primary,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              "Loading...",
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: cs.onSurfaceVariant,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
                         )
                       else
-                        Text(
-                          badgeCount == 0 ? "No pending requests." : "$badgeCount pending request(s).",
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: badgeCount == 0 ? cs.onSurfaceVariant : cs.primary,
-                            fontWeight: FontWeight.w800,
-                          ),
+                        Row(
+                          children: [
+                            Container(
+                              width: 6,
+                              height: 6,
+                              decoration: BoxDecoration(
+                                color: badgeCount > 0 ? iconColor : cs.outline,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              badgeCount == 0
+                                  ? "No pending requests"
+                                  : "$badgeCount pending",
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: badgeCount > 0
+                                    ? iconColor
+                                    : cs.onSurfaceVariant,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
                         ),
                     ],
                   ),
                 ),
-                Icon(Icons.chevron_right_rounded, color: cs.onSurfaceVariant),
+
+                const SizedBox(width: 8),
+
+                // Arrow Icon
+                Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  color: cs.onSurfaceVariant.withOpacity(0.4),
+                  size: 16,
+                ),
               ],
             ),
           ),
         ),
-        Positioned(
-          top: -8,
-          right: -8,
-          child: _TopBadge(count: badgeCount, loading: loading),
-        ),
-      ],
-    );
-  }
-}
-
-class _TopBadge extends StatelessWidget {
-  final int count;
-  final bool loading;
-
-  const _TopBadge({required this.count, required this.loading});
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
-    final show = !loading && count > 0;
-    final text = count > 99 ? "99+" : "$count";
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: loading ? cs.surfaceContainerHigh : (show ? cs.primary : cs.surfaceContainerHigh),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: cs.outlineVariant.withOpacity(0.5)),
-        boxShadow: [
-          BoxShadow(
-            blurRadius: 10,
-            color: Colors.black.withOpacity(0.08),
-            offset: const Offset(0, 4),
-          ),
-        ],
       ),
-      child: loading
-          ? SizedBox(
-              width: 14,
-              height: 14,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: cs.primary,
-              ),
-            )
-          : Text(
-              show ? text : "0",
-              style: TextStyle(
-                fontWeight: FontWeight.w900,
-                fontSize: 12,
-                color: show ? cs.onPrimary : cs.onSurfaceVariant,
-              ),
-            ),
     );
   }
 }

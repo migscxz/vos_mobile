@@ -3,23 +3,22 @@
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 
-import "../../../app.dart"; // apiClientProvider, authRepositoryProvider
+import "../../../app.dart";
 import "../../../data/repositories/stock_transfer_repository.dart";
 import "stock_transfer_models.dart";
 
 class StockTransferApprovalSheet extends ConsumerStatefulWidget {
-  const StockTransferApprovalSheet({
-    super.key,
-    required this.header,
-  });
+  const StockTransferApprovalSheet({super.key, required this.header});
 
   final StockTransferHeader header;
 
   @override
-  ConsumerState<StockTransferApprovalSheet> createState() => _StockTransferApprovalSheetState();
+  ConsumerState<StockTransferApprovalSheet> createState() =>
+      _StockTransferApprovalSheetState();
 }
 
-class _StockTransferApprovalSheetState extends ConsumerState<StockTransferApprovalSheet> {
+class _StockTransferApprovalSheetState
+    extends ConsumerState<StockTransferApprovalSheet> {
   bool _approving = false;
   String? _error;
 
@@ -35,9 +34,13 @@ class _StockTransferApprovalSheetState extends ConsumerState<StockTransferApprov
       final api = ref.read(apiClientProvider);
       final repo = StockTransferRepository(api);
 
-      final createdBy = await ref.read(authRepositoryProvider).getCurrentAppUserId();
+      final createdBy = await ref
+          .read(authRepositoryProvider)
+          .getCurrentAppUserId();
       if (createdBy == null) {
-        throw Exception("No user session found (user_id missing). Please login again.");
+        throw Exception(
+          "No user session found (user_id missing). Please login again.",
+        );
       }
 
       final approveRes = await repo.approveStockTransferAndCreateCldtst(
@@ -81,39 +84,48 @@ class _StockTransferApprovalSheetState extends ConsumerState<StockTransferApprov
             decoration: BoxDecoration(
               color: cs.surface,
               borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(18),
-                topRight: Radius.circular(18),
+                topLeft: Radius.circular(24),
+                topRight: Radius.circular(24),
               ),
-              border: Border.all(color: cs.outlineVariant.withOpacity(0.40)),
+              boxShadow: const [
+                BoxShadow(
+                  color: Colors.black12,
+                  blurRadius: 16,
+                  offset: Offset(0, -4),
+                ),
+              ],
             ),
             child: Column(
               children: [
-                Padding(
-                  padding: const EdgeInsets.only(top: 10, bottom: 6),
+                // Improved drag handle
+                Container(
+                  margin: const EdgeInsets.only(top: 12, bottom: 4),
                   child: Container(
-                    width: 44,
+                    width: 48,
                     height: 4,
                     decoration: BoxDecoration(
-                      color: cs.onSurfaceVariant.withOpacity(0.35),
-                      borderRadius: BorderRadius.circular(999),
+                      color: cs.outlineVariant.withOpacity(0.4),
+                      borderRadius: BorderRadius.circular(2),
                     ),
                   ),
                 ),
+
+                // Header section
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+                  padding: const EdgeInsets.fromLTRB(24, 8, 16, 16),
                   child: Row(
                     children: [
                       Expanded(
                         child: Text(
                           "Approve Stock Transfer",
-                          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.headlineSmall?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
                       IconButton(
+                        icon: Icon(Icons.close_rounded, size: 24),
                         onPressed: () => Navigator.of(context).pop(),
-                        icon: const Icon(Icons.close_rounded),
                       ),
                     ],
                   ),
@@ -122,13 +134,14 @@ class _StockTransferApprovalSheetState extends ConsumerState<StockTransferApprov
                 Expanded(
                   child: ListView(
                     controller: scrollCtrl,
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
                     children: [
                       if (_error != null) ...[
                         _ErrorBanner(message: _error!),
-                        const SizedBox(height: 12),
+                        const SizedBox(height: 16),
                       ],
 
+                      // Transfer details card
                       _Card(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -138,13 +151,10 @@ class _StockTransferApprovalSheetState extends ConsumerState<StockTransferApprov
                                 Expanded(
                                   child: Text(
                                     header.orderNo,
-                                    style: const TextStyle(
-                                      fontFamily: "monospace",
-                                      fontWeight: FontWeight.w900,
-                                      fontSize: 16,
+                                    style: theme.textTheme.titleLarge?.copyWith(
+                                      fontWeight: FontWeight.w700,
+                                      fontFamily: "RobotoMono",
                                     ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
                                 _Pill(
@@ -154,56 +164,78 @@ class _StockTransferApprovalSheetState extends ConsumerState<StockTransferApprov
                                 ),
                               ],
                             ),
-                            const SizedBox(height: 10),
-                            _kv("Requested by", header.requesterName),
-                            const SizedBox(height: 6),
-                            _kv("Requested at", "${fmtYmd(header.requestedAt)} ${fmtHm(header.requestedAt)}"),
-                            const SizedBox(height: 6),
-                            _kv("Route", header.routeLabel),
-                            const SizedBox(height: 6),
-                            _kv("Total Qty", "${header.totalOrderedQty}"),
+                            const SizedBox(height: 16),
+                            _KeyValueRow(
+                              label: "Requested by",
+                              value: header.requesterName,
+                            ),
+                            const SizedBox(height: 12),
+                            _KeyValueRow(
+                              label: "Requested at",
+                              value:
+                                  "${fmtYmd(header.requestedAt)} ${fmtHm(header.requestedAt)}",
+                            ),
+                            const SizedBox(height: 12),
+                            _KeyValueRow(
+                              label: "Route",
+                              value: header.routeLabel,
+                            ),
+                            const SizedBox(height: 12),
+                            _KeyValueRow(
+                              label: "Total Qty",
+                              value: "${header.totalOrderedQty}",
+                            ),
                           ],
                         ),
                       ),
 
-                      const SizedBox(height: 14),
+                      const SizedBox(height: 20),
 
+                      // Items section header
                       Text(
                         "Items (${header.items.length})",
-                        style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 16),
 
+                      // Items list
                       ...header.items.map((item) {
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 10),
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 12),
                           child: _Card(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
                                   item.productName,
-                                  style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w900),
+                                  style: theme.textTheme.titleSmall?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
-                                const SizedBox(height: 6),
+                                const SizedBox(height: 8),
                                 Text(
-                                  "Qty: ${item.orderedQty}",
+                                  "Quantity: ${item.orderedQty}",
                                   style: theme.textTheme.bodyMedium?.copyWith(
                                     color: cs.onSurfaceVariant,
-                                    fontWeight: FontWeight.w800,
                                   ),
                                 ),
                                 if (item.remarks.trim().isNotEmpty) ...[
-                                  const SizedBox(height: 10),
+                                  const SizedBox(height: 12),
                                   Text(
                                     "Remarks",
-                                    style: theme.textTheme.labelLarge?.copyWith(
-                                      fontWeight: FontWeight.w900,
-                                      color: cs.onSurfaceVariant,
-                                    ),
+                                    style: theme.textTheme.labelMedium
+                                        ?.copyWith(
+                                          fontWeight: FontWeight.w600,
+                                          color: cs.onSurfaceVariant,
+                                        ),
                                   ),
-                                  const SizedBox(height: 4),
-                                  Text(item.remarks),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    item.remarks,
+                                    style: theme.textTheme.bodyMedium,
+                                  ),
                                 ],
                               ],
                             ),
@@ -214,14 +246,30 @@ class _StockTransferApprovalSheetState extends ConsumerState<StockTransferApprov
                   ),
                 ),
 
+                // Action button
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
                   child: FilledButton(
                     onPressed: _approving ? null : _approve,
-                    style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size.fromHeight(52),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
                     child: _approving
-                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Text("Approve", style: TextStyle(fontWeight: FontWeight.w900)),
+                        ? const SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(strokeWidth: 2.5),
+                          )
+                        : Text(
+                            "Approve Transfer",
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: cs.onPrimary,
+                            ),
+                          ),
                   ),
                 ),
               ],
@@ -234,7 +282,7 @@ class _StockTransferApprovalSheetState extends ConsumerState<StockTransferApprov
 }
 
 // -------------------------
-// Small UI helpers (same style as Sales Order sheet)
+// Enhanced UI Components
 // -------------------------
 
 class _Card extends StatelessWidget {
@@ -246,11 +294,18 @@ class _Card extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: cs.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: cs.outlineVariant.withOpacity(0.35)),
+        color: cs.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: cs.outlineVariant.withOpacity(0.5)),
+        boxShadow: [
+          BoxShadow(
+            color: cs.shadow.withOpacity(0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: child,
     );
@@ -266,14 +321,17 @@ class _ErrorBanner extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: cs.errorContainer,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Text(
         message,
-        style: TextStyle(color: cs.onErrorContainer, fontWeight: FontWeight.w800),
+        style: TextStyle(
+          color: cs.onErrorContainer,
+          fontWeight: FontWeight.w500,
+        ),
       ),
     );
   }
@@ -289,23 +347,46 @@ class _Pill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: bg,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: fg.withOpacity(0.25)),
+        borderRadius: BorderRadius.circular(20),
       ),
-      child: Text(text, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: fg)),
+      child: Text(
+        text,
+        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: fg),
+      ),
     );
   }
 }
 
-Widget _kv(String k, String v) {
-  return Row(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      SizedBox(width: 110, child: Text(k, style: const TextStyle(fontWeight: FontWeight.w900))),
-      Expanded(child: Text(v)),
-    ],
-  );
+class _KeyValueRow extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _KeyValueRow({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 120,
+          child: Text(
+            label,
+            style: const TextStyle(fontWeight: FontWeight.w500),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }
