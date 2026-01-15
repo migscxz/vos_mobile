@@ -17,10 +17,12 @@ class SalesOrderApprovalSheet extends ConsumerStatefulWidget {
   final List<repo.SalesOrderHeader> orders;
 
   @override
-  ConsumerState<SalesOrderApprovalSheet> createState() => _SalesOrderApprovalSheetState();
+  ConsumerState<SalesOrderApprovalSheet> createState() =>
+      _SalesOrderApprovalSheetState();
 }
 
-class _SalesOrderApprovalSheetState extends ConsumerState<SalesOrderApprovalSheet> {
+class _SalesOrderApprovalSheetState
+    extends ConsumerState<SalesOrderApprovalSheet> {
   bool _loading = true;
   bool _approving = false;
   String? _error;
@@ -72,7 +74,9 @@ class _SalesOrderApprovalSheetState extends ConsumerState<SalesOrderApprovalShee
     try {
       final api = ref.read(apiClientProvider);
       final r = repo.SalesOrderRepository(api);
-      final approverId = await ref.read(authRepositoryProvider).getCurrentAppUserId();
+      final approverId = await ref
+          .read(authRepositoryProvider)
+          .getCurrentAppUserId();
 
       // Approve per PO group when possible
       final byPo = <String, List<repo.SalesOrderHeader>>{};
@@ -133,8 +137,14 @@ class _SalesOrderApprovalSheetState extends ConsumerState<SalesOrderApprovalShee
 
     final group = _groupSummary;
 
-    final ordersNetTotal = widget.orders.fold<double>(0.0, (s, o) => s + o.netAmount);
-    final ordersGrossTotal = widget.orders.fold<double>(0.0, (s, o) => s + o.totalAmount);
+    final ordersNetTotal = widget.orders.fold<double>(
+      0.0,
+      (s, o) => s + o.netAmount,
+    );
+    final ordersGrossTotal = widget.orders.fold<double>(
+      0.0,
+      (s, o) => s + o.totalAmount,
+    );
 
     // Correct workflow: approve -> For Consolidation
     final nextStatus = repo.SalesOrderRepository.soStatusAfterApprove;
@@ -142,7 +152,7 @@ class _SalesOrderApprovalSheetState extends ConsumerState<SalesOrderApprovalShee
     return Container(
       color: Colors.transparent,
       child: DraggableScrollableSheet(
-        initialChildSize: 0.86,
+        initialChildSize: 0.75,
         minChildSize: 0.55,
         maxChildSize: 0.95,
         builder: (ctx, scrollCtrl) {
@@ -150,17 +160,25 @@ class _SalesOrderApprovalSheetState extends ConsumerState<SalesOrderApprovalShee
             decoration: BoxDecoration(
               color: cs.surface,
               borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(18),
-                topRight: Radius.circular(18),
+                topLeft: Radius.circular(22),
+                topRight: Radius.circular(22),
               ),
               border: Border.all(color: cs.outlineVariant.withOpacity(0.40)),
+              boxShadow: [
+                BoxShadow(
+                  color: cs.shadow.withOpacity(0.08),
+                  blurRadius: 18,
+                  offset: const Offset(0, -6),
+                ),
+              ],
             ),
             child: Column(
               children: [
+                // Drag handle
                 Padding(
-                  padding: const EdgeInsets.only(top: 10, bottom: 6),
+                  padding: const EdgeInsets.only(top: 10, bottom: 8),
                   child: Container(
-                    width: 44,
+                    width: 48,
                     height: 4,
                     decoration: BoxDecoration(
                       color: cs.onSurfaceVariant.withOpacity(0.35),
@@ -168,19 +186,38 @@ class _SalesOrderApprovalSheetState extends ConsumerState<SalesOrderApprovalShee
                     ),
                   ),
                 ),
+
+                // Header
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+                  padding: const EdgeInsets.fromLTRB(18, 2, 10, 12),
                   child: Row(
                     children: [
                       Expanded(
-                        child: Text(
-                          "Approve Sales Orders",
-                          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "Approve Sales Orders",
+                              style: theme.textTheme.titleLarge?.copyWith(
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: -0.2,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              "Customer grouped approval",
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: cs.onSurfaceVariant,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                       IconButton(
                         onPressed: () => Navigator.of(context).pop(false),
                         icon: const Icon(Icons.close_rounded),
+                        tooltip: "Close",
                       ),
                     ],
                   ),
@@ -196,39 +233,81 @@ class _SalesOrderApprovalSheetState extends ConsumerState<SalesOrderApprovalShee
                         const SizedBox(height: 12),
                       ],
 
-                      // Header summary
+                      // Customer + totals summary (hero card)
                       _Card(
+                        padding: const EdgeInsets.all(14),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              widget.customerName,
-                              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              "Code: ${widget.customerCode}",
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: cs.onSurfaceVariant,
-                                fontWeight: FontWeight.w700,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 10),
                             Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Expanded(child: _MiniKV(label: "Orders", value: "${widget.orders.length}")),
-                                Expanded(child: _MiniKV(label: "Next Status", value: nextStatus)),
+                                _AvatarMark(
+                                  letter: _initial(widget.customerName),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        widget.customerName,
+                                        style: theme.textTheme.titleMedium
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w900,
+                                              letterSpacing: -0.2,
+                                            ),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        widget.customerCode.trim().isEmpty
+                                            ? "Code: —"
+                                            : "Code: ${widget.customerCode}",
+                                        style: theme.textTheme.bodySmall
+                                            ?.copyWith(
+                                              color: cs.onSurfaceVariant,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                _Pill(
+                                  text: nextStatus.toUpperCase(),
+                                  bg: cs.primary.withOpacity(0.10),
+                                  fg: cs.primary,
+                                ),
                               ],
                             ),
-                            const SizedBox(height: 10),
+                            const SizedBox(height: 12),
+                            const Divider(height: 1),
+                            const SizedBox(height: 12),
                             Row(
                               children: [
-                                Expanded(child: _MiniKV(label: "Net Total", value: _fmtMoney(ordersNetTotal))),
-                                Expanded(child: _MiniKV(label: "Gross Total", value: _fmtMoney(ordersGrossTotal))),
+                                Expanded(
+                                  child: _MiniKV(
+                                    label: "Orders",
+                                    value: "${widget.orders.length}",
+                                  ),
+                                ),
+                                Expanded(
+                                  child: _MiniKV(
+                                    label: "Net Total",
+                                    value: _fmtMoney(ordersNetTotal),
+                                  ),
+                                ),
+                                Expanded(
+                                  child: _MiniKV(
+                                    label: "Gross Total",
+                                    value: _fmtMoney(ordersGrossTotal),
+                                  ),
+                                ),
                               ],
                             ),
                           ],
@@ -238,31 +317,50 @@ class _SalesOrderApprovalSheetState extends ConsumerState<SalesOrderApprovalShee
                       const SizedBox(height: 14),
 
                       // Payment summary
+                      _SectionHeader(
+                        title: "Payment Summary",
+                        subtitle: "Group-level invoices and payments",
+                      ),
+                      const SizedBox(height: 10),
                       _Card(
+                        padding: const EdgeInsets.all(14),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              "Payment Summary (Group)",
-                              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
-                            ),
-                            const SizedBox(height: 12),
-                            if (_loading && group == null)
-                              Text(
-                                "Loading payment summary...",
-                                style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
-                              )
-                            else ...[
+                            if (_loading && group == null) ...[
+                              _SkeletonLine(widthFactor: 0.55),
+                              const SizedBox(height: 10),
+                              _SkeletonLine(widthFactor: 0.85),
+                              const SizedBox(height: 10),
+                              _SkeletonLine(widthFactor: 0.70),
+                            ] else ...[
                               Row(
                                 children: [
-                                  Expanded(child: _MiniKV(label: "Invoices", value: "${group?.invoiceCount ?? 0}")),
-                                  Expanded(child: _MiniKV(label: "Payments", value: "${group?.paymentCount ?? 0}")),
+                                  Expanded(
+                                    child: _MiniKV(
+                                      label: "Invoices",
+                                      value: "${group?.invoiceCount ?? 0}",
+                                    ),
+                                  ),
+                                  Expanded(
+                                    child: _MiniKV(
+                                      label: "Payments",
+                                      value: "${group?.paymentCount ?? 0}",
+                                    ),
+                                  ),
                                 ],
                               ),
-                              const SizedBox(height: 10),
+                              const SizedBox(height: 12),
                               Row(
                                 children: [
-                                  Expanded(child: _MiniKV(label: "Invoice Total", value: _fmtMoney(group?.invoiceTotal ?? 0))),
+                                  Expanded(
+                                    child: _MiniKV(
+                                      label: "Invoice Total",
+                                      value: _fmtMoney(
+                                        group?.invoiceTotal ?? 0,
+                                      ),
+                                    ),
+                                  ),
                                   Expanded(
                                     child: _MiniKV(
                                       label: "Paid Total",
@@ -272,11 +370,13 @@ class _SalesOrderApprovalSheetState extends ConsumerState<SalesOrderApprovalShee
                                   ),
                                 ],
                               ),
-                              const SizedBox(height: 10),
+                              const SizedBox(height: 12),
                               _MiniKV(
                                 label: "Unpaid Total",
                                 value: _fmtMoney(group?.unpaidTotal ?? 0),
-                                valueTone: (group?.unpaidTotal ?? 0) > 0 ? cs.error : cs.onSurface,
+                                valueTone: (group?.unpaidTotal ?? 0) > 0
+                                    ? cs.error
+                                    : cs.onSurface,
                               ),
                             ],
                           ],
@@ -285,58 +385,34 @@ class _SalesOrderApprovalSheetState extends ConsumerState<SalesOrderApprovalShee
 
                       const SizedBox(height: 14),
 
-                      // Orders list (compact)
+                      // Orders list
+                      _SectionHeader(
+                        title: "Orders Included",
+                        subtitle: "${widget.orders.length} order(s) ready",
+                        trailing: _Pill(
+                          text: "FOR APPROVAL",
+                          bg: cs.secondary.withOpacity(0.10),
+                          fg: cs.secondary,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
                       _Card(
+                        padding: const EdgeInsets.all(14),
                         child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              "Orders Included",
-                              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
-                            ),
-                            const SizedBox(height: 10),
                             ...widget.orders.map((o) {
-                              final soNo = o.orderNo.trim().isEmpty ? "SO-${o.orderId}" : o.orderNo.trim();
+                              final soNo = o.orderNo.trim().isEmpty
+                                  ? "SO-${o.orderId}"
+                                  : o.orderNo.trim();
                               final po = (o.poNo ?? "").trim();
-                              final amount = (o.netAmount != 0) ? o.netAmount : o.totalAmount;
+                              final amount = (o.netAmount != 0)
+                                  ? o.netAmount
+                                  : o.totalAmount;
 
-                              return Padding(
-                                padding: const EdgeInsets.only(bottom: 10),
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            soNo,
-                                            style: const TextStyle(
-                                              fontFamily: "monospace",
-                                              fontWeight: FontWeight.w900,
-                                            ),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                          if (po.isNotEmpty) ...[
-                                            const SizedBox(height: 2),
-                                            Text(
-                                              "PO: $po",
-                                              style: theme.textTheme.bodySmall?.copyWith(
-                                                color: cs.onSurfaceVariant,
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                            ),
-                                          ],
-                                        ],
-                                      ),
-                                    ),
-                                    const SizedBox(width: 10),
-                                    Text(
-                                      _fmtMoney(amount),
-                                      style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w900),
-                                    ),
-                                  ],
-                                ),
+                              return _OrderRow(
+                                soNo: soNo,
+                                poNo: po,
+                                amount: _fmtMoney(amount),
                               );
                             }),
                           ],
@@ -346,27 +422,51 @@ class _SalesOrderApprovalSheetState extends ConsumerState<SalesOrderApprovalShee
                   ),
                 ),
 
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: FilledButton(
-                          onPressed: (_approving || _loading) ? null : _onApproveAll,
-                          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
-                          child: _approving
-                              ? const SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(strokeWidth: 2),
-                                )
-                              : Text(
-                                  "Approve All (${widget.orders.length})",
-                                  style: const TextStyle(fontWeight: FontWeight.w900),
-                                ),
+                // Bottom CTA (sticky)
+                SafeArea(
+                  top: false,
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+                    decoration: BoxDecoration(
+                      color: cs.surface,
+                      border: Border(
+                        top: BorderSide(
+                          color: cs.outlineVariant.withOpacity(0.45),
                         ),
                       ),
-                    ],
+                    ),
+                    child: FilledButton(
+                      onPressed: (_approving || _loading)
+                          ? null
+                          : _onApproveAll,
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(52),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      child: _approving
+                          ? const SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.2,
+                              ),
+                            )
+                          : Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(Icons.verified_rounded, size: 18),
+                                const SizedBox(width: 8),
+                                Text(
+                                  "Approve All (${widget.orders.length})",
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ],
+                            ),
+                    ),
                   ),
                 ),
               ],
@@ -379,25 +479,193 @@ class _SalesOrderApprovalSheetState extends ConsumerState<SalesOrderApprovalShee
 }
 
 // =====================
-// Small UI
+// Small UI (Revised)
 // =====================
 
 class _Card extends StatelessWidget {
-  const _Card({required this.child});
+  const _Card({required this.child, this.padding = const EdgeInsets.all(12)});
+
   final Widget child;
+  final EdgeInsets padding;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    return Container(
+      width: double.infinity,
+      padding: padding,
+      decoration: BoxDecoration(
+        color: cs.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: cs.outlineVariant.withOpacity(0.42)),
+        boxShadow: [
+          BoxShadow(
+            color: cs.shadow.withOpacity(0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+}
+
+class _SectionHeader extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final Widget? trailing;
+
+  const _SectionHeader({
+    required this.title,
+    required this.subtitle,
+    this.trailing,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -0.2,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                subtitle,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: cs.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (trailing != null) trailing!,
+      ],
+    );
+  }
+}
+
+class _AvatarMark extends StatelessWidget {
+  final String letter;
+  const _AvatarMark({required this.letter});
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
+      width: 40,
+      height: 40,
       decoration: BoxDecoration(
-        color: cs.surfaceContainerLowest,
+        color: cs.primaryContainer,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: cs.outlineVariant.withOpacity(0.35)),
+        border: Border.all(color: cs.primary.withOpacity(0.15)),
       ),
-      child: child,
+      child: Center(
+        child: Text(
+          letter,
+          style: TextStyle(
+            fontWeight: FontWeight.w900,
+            color: cs.onPrimaryContainer,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _OrderRow extends StatelessWidget {
+  final String soNo;
+  final String poNo;
+  final String amount;
+
+  const _OrderRow({
+    required this.soNo,
+    required this.poNo,
+    required this.amount,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  soNo,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.2,
+                    fontFamily: "RobotoMono",
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (poNo.trim().isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    "PO: $poNo",
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: cs.onSurfaceVariant,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            amount,
+            style: theme.textTheme.bodySmall?.copyWith(
+              fontWeight: FontWeight.w900,
+              color: cs.onSurface,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SkeletonLine extends StatelessWidget {
+  final double widthFactor;
+  const _SkeletonLine({required this.widthFactor});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return FractionallySizedBox(
+      widthFactor: widthFactor,
+      child: Container(
+        height: 12,
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(999),
+        ),
+      ),
     );
   }
 }
@@ -411,14 +679,27 @@ class _ErrorBanner extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: cs.errorContainer,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: cs.error.withOpacity(0.20)),
       ),
-      child: Text(
-        message,
-        style: TextStyle(color: cs.onErrorContainer, fontWeight: FontWeight.w800),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.error_outline_rounded, color: cs.onErrorContainer),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(
+                color: cs.onErrorContainer,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -443,9 +724,10 @@ class _MiniKV extends StatelessWidget {
           style: theme.textTheme.labelSmall?.copyWith(
             color: cs.onSurfaceVariant,
             fontWeight: FontWeight.w800,
+            letterSpacing: 0.2,
           ),
         ),
-        const SizedBox(height: 2),
+        const SizedBox(height: 3),
         Text(
           value,
           maxLines: 1,
@@ -453,11 +735,51 @@ class _MiniKV extends StatelessWidget {
           style: theme.textTheme.bodyMedium?.copyWith(
             fontWeight: FontWeight.w900,
             color: valueTone ?? cs.onSurface,
+            letterSpacing: -0.1,
           ),
         ),
       ],
     );
   }
+}
+
+class _Pill extends StatelessWidget {
+  final String text;
+  final Color bg;
+  final Color fg;
+
+  const _Pill({required this.text, required this.bg, required this.fg});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: fg.withOpacity(0.22)),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w900,
+          color: fg,
+          letterSpacing: 0.3,
+        ),
+      ),
+    );
+  }
+}
+
+// =====================
+// Small helpers
+// =====================
+
+String _initial(String name) {
+  final s = name.trim();
+  if (s.isEmpty) return "?";
+  return s.characters.first.toUpperCase();
 }
 
 String _fmtMoney(double v) => "₱ ${v.toStringAsFixed(2)}";
