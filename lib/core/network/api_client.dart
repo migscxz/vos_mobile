@@ -73,6 +73,10 @@ class ApiClient {
       print("DIO ERROR status: ${e.response?.statusCode}");
       // ignore: avoid_print
       print("DIO ERROR data: ${e.response?.data}");
+      if (e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.receiveTimeout) {
+        throw Exception("The server is down");
+      }
       rethrow;
     } catch (e) {
       // ignore: avoid_print
@@ -116,6 +120,10 @@ class ApiClient {
       print("DIO ERROR status: ${e.response?.statusCode}");
       // ignore: avoid_print
       print("DIO ERROR data: ${e.response?.data}");
+      if (e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.receiveTimeout) {
+        throw Exception("The server is down");
+      }
       rethrow;
     } catch (e) {
       // ignore: avoid_print
@@ -157,6 +165,10 @@ class ApiClient {
       print("DIO ERROR status: ${e.response?.statusCode}");
       // ignore: avoid_print
       print("DIO ERROR data: ${e.response?.data}");
+      if (e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.receiveTimeout) {
+        throw Exception("The server is down");
+      }
       rethrow;
     } catch (e) {
       // ignore: avoid_print
@@ -198,6 +210,10 @@ class ApiClient {
       print("DIO ERROR status: ${e.response?.statusCode}");
       // ignore: avoid_print
       print("DIO ERROR data: ${e.response?.data}");
+      if (e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.receiveTimeout) {
+        throw Exception("The server is down");
+      }
       rethrow;
     } catch (e) {
       // ignore: avoid_print
@@ -244,6 +260,10 @@ class ApiClient {
       print("DIO ERROR status: ${e.response?.statusCode}");
       // ignore: avoid_print
       print("DIO ERROR data: ${e.response?.data}");
+      if (e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.receiveTimeout) {
+        throw Exception("The server is down");
+      }
       rethrow;
     } catch (e) {
       // ignore: avoid_print
