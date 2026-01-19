@@ -1,6 +1,6 @@
 import 'dart:math';
+
 import 'package:flutter/foundation.dart';
-import 'package:sqflite/sqflite.dart';
 
 import '../../data/local/app_db.dart';
 
@@ -63,41 +63,45 @@ class AssetRecord {
   });
 
   /// Build from SQLite map (view: v_assets_equipment).
-  factory AssetRecord.fromRow(Map<String, Object?> r) {
-    double _num(Object? v) {
-      if (v == null) return 0.0;
-      if (v is num) return v.toDouble();
-      return double.tryParse(v.toString()) ?? 0.0;
-    }
+ factory AssetRecord.fromRow(Map<String, Object?> r) {
 
-    int? _intN(Object? v) {
-      if (v == null) return null;
-      if (v is int) return v;
-      if (v is num) return v.toInt();
-      return int.tryParse(v.toString());
-    }
-
-    String _str(Object? v) => (v?.toString() ?? '').trim();
-
-    return AssetRecord(
-      id: _intN(r['id']) ?? 0,
-      itemImage: r['item_image']?.toString(),
-      itemType: _str(r['item_type']),
-      quantity: _intN(r['quantity']) ?? 0,
-      rfidCode: r['rfid_code']?.toString(),
-      barcode: r['barcode']?.toString(),
-      department: _str(r['department']),
-      employee: _str(r['employee']),
-      costPerItem: _num(r['cost_per_item']),
-      total: _num(r['total']),
-      condition: _str(r['condition']),
-      lifeSpan: _intN(r['life_span']),
-      depreciationValueYear: _num(r['depreciation_value_year']),
-      encoder: _str(r['encoder']),
-      dateAcquired: r['date_acquired']?.toString(),
-      dateCreated: r['date_created']?.toString(),
-    );
+  double toDouble(dynamic v) {
+    if (v == null) return 0.0;
+    if (v is int) return v.toDouble();
+    if (v is double) return v;
+    return double.tryParse(v.toString()) ?? 0.0;
   }
+
+  int? toInt(dynamic v) {
+    if (v == null) return null;
+    if (v is int) return v;
+    if (v is double) return v.toInt();
+    return int.tryParse(v.toString());
+  }
+
+  String str(dynamic v) => (v?.toString() ?? '').trim();
+
+  return AssetRecord(
+    id: toInt(r['id']) ?? 0,
+    itemImage: r['item_image']?.toString(),
+    itemType: str(r['item_type']),
+    quantity: toInt(r['quantity']) ?? 0,
+    rfidCode: r['rfid_code']?.toString(),
+    barcode: r['barcode']?.toString(),
+    department: str(r['department']),
+    employee: str(r['employee']),
+    costPerItem: toDouble(r['cost_per_item']),
+    total: toDouble(r['total']),
+    condition: str(r['condition']),
+    lifeSpan: toInt(r['life_span']),
+    depreciationValueYear: toDouble(r['depreciation_value_year']),
+    encoder: str(r['encoder']),
+    dateAcquired: r['date_acquired']?.toString(),
+    dateCreated: r['date_created']?.toString(),
+  );
+}
+
+
 }
 
 /// State holder for the Assets & Equipment screen.
@@ -115,9 +119,7 @@ class AssetsAndEquipmentsState extends ChangeNotifier {
 
   // Dropdown sources (department/condition). Department list is built from data.
   // Conditions can be static or from data; we’ll merge both.
-  final List<String> _baseDepartments = const [
-    'All Departments',
-  ];
+  final List<String> _baseDepartments = const ['All Departments'];
 
   final List<String> _baseConditions = const [
     'All Conditions',
@@ -139,18 +141,13 @@ class AssetsAndEquipmentsState extends ChangeNotifier {
   List<AssetRecord> get allAssets => _all;
 
   List<String> get departments {
-    final dynamicDeps = _all
-        .map((e) => e.department)
-        .where((e) => e.isNotEmpty)
-        .toSet()
-        .toList()
+    final dynamicDeps = _all.map((e) => e.department).where((e) => e.isNotEmpty).toSet().toList()
       ..sort();
     return {..._baseDepartments, ...dynamicDeps}.toList();
   }
 
   List<String> get conditions {
-    final fromData =
-    _all.map((e) => e.condition).where((e) => e.isNotEmpty).toSet().toList()
+    final fromData = _all.map((e) => e.condition).where((e) => e.isNotEmpty).toSet().toList()
       ..sort();
     // put base first, then union (without duplicates)
     final merged = <String>[];
@@ -167,16 +164,15 @@ class AssetsAndEquipmentsState extends ChangeNotifier {
   List<AssetRecord> get filteredAssets {
     final q = _search.trim().toLowerCase();
     return _all.where((a) {
-      final matchesSearch = q.isEmpty ||
+      final matchesSearch =
+          q.isEmpty ||
           a.itemType.toLowerCase().contains(q) ||
           a.employee.toLowerCase().contains(q) ||
           (a.rfidCode ?? '').toLowerCase().contains(q) ||
           (a.barcode ?? '').toLowerCase().contains(q);
 
-      final matchesDept =
-          (_department == 'All Departments') || a.department == _department;
-      final matchesCond =
-          (_condition == 'All Conditions') || a.condition == _condition;
+      final matchesDept = (_department == 'All Departments') || a.department == _department;
+      final matchesCond = (_condition == 'All Conditions') || a.condition == _condition;
 
       return matchesSearch && matchesDept && matchesCond;
     }).toList();

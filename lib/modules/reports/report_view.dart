@@ -11,7 +11,6 @@ import 'accounts_payable/ap_view.dart';
 import 'accounts_receivable/ar_view.dart';
 import 'disbursement/disburment_view.dart';
 import 'sales_report/sr_view.dart';
-import 'assets_and_equipments/assets_and_equipments_view.dart';
 
 class ReportView extends ConsumerWidget {
   const ReportView({super.key});

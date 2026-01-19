@@ -229,7 +229,7 @@ class ApiClient {
     final res = await patchJson(path, body: data);
     final d = res["data"];
     if (d is Map) return Map<String, dynamic>.from(d);
-    if (res is Map<String, dynamic>) return res;
+    return res;
     return const {};
   }
 

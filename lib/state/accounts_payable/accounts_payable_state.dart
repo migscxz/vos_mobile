@@ -39,7 +39,7 @@ class APVendorCard {
   });
 
   factory APVendorCard.fromRow(Map<String, Object?> r) {
-    double _asDouble(dynamic v) {
+    double asDouble(dynamic v) {
       if (v == null) return 0.0;
       if (v is num) return v.toDouble();
       return double.tryParse(v.toString()) ?? 0.0;
@@ -48,7 +48,7 @@ class APVendorCard {
     return APVendorCard(
       payeeId: (r['payee_id'] as num).toInt(),
       vendor: (r['vendor'] ?? '').toString(),
-      total: _asDouble(r['total']),
+      total: asDouble(r['total']),
       due: (r['due'] as String?)?.trim().isEmpty == true ? null : r['due'] as String?,
       status: (r['status'] ?? '').toString(),
       remarks: (r['remarks'] ?? '').toString(),
@@ -78,7 +78,7 @@ class APBillItem {
   });
 
   factory APBillItem.fromRow(Map<String, Object?> r) {
-    double _asDouble(dynamic v) {
+    double asDouble(dynamic v) {
       if (v == null) return 0.0;
       if (v is num) return v.toDouble();
       return double.tryParse(v.toString()) ?? 0.0;
@@ -87,7 +87,7 @@ class APBillItem {
     return APBillItem(
       no: (r['no'] ?? '').toString(),
       due: (r['due'] as String?)?.trim().isEmpty == true ? null : r['due'] as String?,
-      amount: _asDouble(r['amount']),
+      amount: asDouble(r['amount']),
       remarks: (r['remarks'] ?? '').toString(),
       primaryCoaId: (r['primary_coa_id'] as num?)?.toInt(),
       primaryCoaGl: r['primary_coa_gl'] as String?,

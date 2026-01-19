@@ -356,10 +356,11 @@ class _ApproverInfo {
 // =====================
 
 class _Card extends StatelessWidget {
-  const _Card({required this.child, this.padding = const EdgeInsets.all(12)});
+  const _Card({required this.child});
 
   final Widget child;
-  final EdgeInsets padding;
+  final EdgeInsets padding = EdgeInsets.zero;
+
 
   @override
   Widget build(BuildContext context) {

@@ -1,6 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
-import '../../data/repository/sync_repository.dart';
 import '../data_providers.dart';
 
 // --- FILTER PROVIDERS ---

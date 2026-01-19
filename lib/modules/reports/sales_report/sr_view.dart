@@ -17,7 +17,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:vos_mobile/data/local/app_db.dart';
 
 class SalesReportView extends StatefulWidget {
-  const SalesReportView({Key? key}) : super(key: key);
+  const SalesReportView({super.key});
 
   @override
   State<SalesReportView> createState() => _SalesReportViewState();
@@ -2164,14 +2164,14 @@ String salesReportToCsv(
     'Customer City',
   ].map(_csvEscape).join(','));
 
-  bool _isNumericLocal(String s) => int.tryParse(s.trim()) != null;
+  bool isNumericLocal(String s) => int.tryParse(s.trim()) != null;
 
   // Rows
   for (final r in rows) {
     final dateStr =
     r.invoiceDate != null ? dateFormat.format(r.invoiceDate!) : '';
     String divisionText = (r.salesmanDivision ?? '').trim();
-    if (divisionText.isNotEmpty && _isNumericLocal(divisionText)) {
+    if (divisionText.isNotEmpty && isNumericLocal(divisionText)) {
       final id = int.tryParse(divisionText);
       if (id != null && divisionLookup.containsKey(id)) {
         divisionText = divisionLookup[id]!;

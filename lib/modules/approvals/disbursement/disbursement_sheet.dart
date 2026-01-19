@@ -599,7 +599,13 @@ class _SectionHeader extends StatelessWidget {
 }
 
 class _MiniKV extends StatelessWidget {
-  const _MiniKV({required this.label, required this.value, this.valueTone});
+  const _MiniKV({
+    required this.label,
+    required this.value,
+    this.valueTone, // <-- add this
+    super.key,
+  });
+
   final String label;
   final String value;
   final Color? valueTone;
@@ -627,7 +633,7 @@ class _MiniKV extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
           style: theme.textTheme.bodyMedium?.copyWith(
             fontWeight: FontWeight.w900,
-            color: valueTone ?? cs.onSurface,
+            color: valueTone ?? cs.onSurface, // fallback if null
             letterSpacing: -0.1,
           ),
         ),
@@ -635,6 +641,7 @@ class _MiniKV extends StatelessWidget {
     );
   }
 }
+
 
 Widget _kv(String k, String v) {
   return Row(

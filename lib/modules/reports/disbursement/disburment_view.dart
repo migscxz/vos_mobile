@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 class DisbursementView extends StatefulWidget {
-  const DisbursementView({Key? key}) : super(key: key);
+  const DisbursementView({super.key});
 
   @override
   State<DisbursementView> createState() => _DisbursementViewState();
@@ -289,7 +289,7 @@ class _DisbursementViewState extends State<DisbursementView> {
                   final index = entry.key;
                   final account = entry.value;
                   return _buildAccountRow(account, index == supplier.accounts.length - 1);
-                }).toList(),
+                }),
               ],
             ),
           ),

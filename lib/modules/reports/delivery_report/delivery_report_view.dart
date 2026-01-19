@@ -317,7 +317,7 @@ class _DriverDropdown extends StatelessWidget {
     return ConstrainedBox(
       constraints: const BoxConstraints(minWidth: 180, maxWidth: 260),
       child: DropdownButtonFormField<String>(
-        value: value,
+        initialValue: value,
         isExpanded: true,
         menuMaxHeight: 320,
         items: [
@@ -465,7 +465,7 @@ class _FilterSheet extends ConsumerWidget {
             loading: () => const Center(child: Text('Loading drivers…')),
             error: (e, _) => Center(child: Text('Drivers error: $e')),
             data: (drivers) => DropdownButtonFormField<String>(
-              value: (driver != null && drivers.contains(driver)) ? driver : null,
+              initialValue: (driver != null && drivers.contains(driver)) ? driver : null,
               isExpanded: true,
               menuMaxHeight: 320,
               items: [
@@ -1181,7 +1181,9 @@ class _PlanCardHeader extends StatelessWidget {
   (int f, int nf) _count() {
     var f = 0, nf = 0;
     for (final cg in plan.customerGroups.values) {
-      for (final r in cg.rows) _isFulfilled(r.postStatus) ? f++ : nf++;
+      for (final r in cg.rows) {
+        _isFulfilled(r.postStatus) ? f++ : nf++;
+      }
     }
     return (f, nf);
   }
@@ -1286,7 +1288,7 @@ class _PlanCardHeader extends StatelessWidget {
             width: double.infinity,
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.5),
+              color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.5),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
                 color: Theme.of(context).colorScheme.onSurface.withOpacity(0.1),

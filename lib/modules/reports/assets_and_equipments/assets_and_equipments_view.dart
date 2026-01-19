@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vos_mobile/state/assets_and_equipments/assets_and_equipments_providers.dart';
 
 class AssetsAndEquipmentsView extends ConsumerStatefulWidget {
-  const AssetsAndEquipmentsView({Key? key}) : super(key: key);
+  const AssetsAndEquipmentsView({super.key});
 
   @override
   ConsumerState<AssetsAndEquipmentsView> createState() =>
@@ -224,7 +224,7 @@ class _AssetsAndEquipmentsViewState
                       const EdgeInsets.symmetric(horizontal: 8),
                     ),
                   );
-                }).toList(),
+                }),
               ],
             ),
           ),

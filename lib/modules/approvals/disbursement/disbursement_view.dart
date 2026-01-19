@@ -62,8 +62,9 @@ class _DisbursementApprovalViewState
   }
 
   void _onScroll() {
-    if (_loading || _loadingMore || !_hasMore || !_scrollCtrl.hasClients)
+    if (_loading || _loadingMore || !_hasMore || !_scrollCtrl.hasClients) {
       return;
+    }
     final maxScroll = _scrollCtrl.position.maxScrollExtent;
     final currentScroll = _scrollCtrl.position.pixels;
     if (currentScroll >= maxScroll - 220) {

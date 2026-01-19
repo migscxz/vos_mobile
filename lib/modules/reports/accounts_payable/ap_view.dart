@@ -201,22 +201,21 @@ class _APViewState extends ConsumerState<APView> {
             // ✅ Proper branching: list on mobile, grid on tablet
             if (!isTablet) ...[
               for (final v in ap.vendors)
-                if (v != null)
-                  _apCard(
+                _apCard(
+                  context,
+                  vendorName: (v as dynamic).vendor ?? '',
+                  total: ((v as dynamic).total ?? 0.0).toDouble(),
+                  dueStr: (v as dynamic).due as String?,
+                  status: (v as dynamic).status ?? 'Current',
+                  remarks: (v as dynamic).remarks ?? '',
+                  onTap: () => _openVendorDetail(
                     context,
-                    vendorName: (v as dynamic).vendor ?? '',
-                    total: ((v as dynamic).total ?? 0.0).toDouble(),
-                    dueStr: (v as dynamic).due as String?,
-                    status: (v as dynamic).status ?? 'Current',
-                    remarks: (v as dynamic).remarks ?? '',
-                    onTap: () => _openVendorDetail(
-                      context,
-                      ((v as dynamic).payeeId ?? 0) as int,
-                      (v as dynamic).vendor ?? '',
-                    ),
-                    currencyFmt: currencyFmt,
-                    isTablet: isTablet,
+                    ((v as dynamic).payeeId ?? 0) as int,
+                    (v as dynamic).vendor ?? '',
                   ),
+                  currencyFmt: currencyFmt,
+                  isTablet: isTablet,
+                ),
             ] else ...[
               _VendorGrid(
                 vendors: ap.vendors,

@@ -1549,18 +1549,18 @@ class SyncRepository {
     String? search,
   }) async {
     final db = await _db;
-    String _toIsoDate(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
+    String toIsoDate(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
 
     final where = <String>[];
     final args = <Object?>[];
 
     if (from != null) {
       where.add("(substr(COALESCE(invoice_date, date_encoded),1,10) >= ?)");
-      args.add(_toIsoDate(from));
+      args.add(toIsoDate(from));
     }
     if (to != null) {
       where.add("(substr(COALESCE(invoice_date, date_encoded),1,10) <= ?)");
-      args.add(_toIsoDate(to));
+      args.add(toIsoDate(to));
     }
     if (driverName != null && driverName.trim().isNotEmpty) {
       where.add("driver_name LIKE ?");
@@ -1611,7 +1611,7 @@ class SyncRepository {
     final where = <String>[];
     final args = <Object?>[];
 
-    String _iso(DateTime d) =>
+    String iso(DateTime d) =>
         DateFormat('yyyy-MM-dd').format(d);
 
     if (search != null && search.trim().isNotEmpty) {
@@ -1624,11 +1624,11 @@ class SyncRepository {
     }
     if (fromDue != null) {
       where.add('(a.due IS NOT NULL AND a.due >= ?)');
-      args.add(_iso(fromDue));
+      args.add(iso(fromDue));
     }
     if (toDue != null) {
       where.add('(a.due IS NOT NULL AND a.due <= ?)');
-      args.add(_iso(toDue));
+      args.add(iso(toDue));
     }
 
     final whereSql = where.isEmpty ? '' : 'WHERE ${where.join(' AND ')}';
@@ -1771,7 +1771,7 @@ class SyncRepository {
   }) async {
     final db = await _db;
     final args = <Object?>[];
-    String _iso(DateTime d) =>
+    String iso(DateTime d) =>
         DateFormat('yyyy-MM-dd').format(d);
 
     final base = '''
@@ -1814,11 +1814,11 @@ class SyncRepository {
     }
     if (from != null) {
       where.add('date(d.transaction_date) >= ?');
-      args.add(_iso(from));
+      args.add(iso(from));
     }
     if (to != null) {
       where.add('date(d.transaction_date) <= ?');
-      args.add(_iso(to));
+      args.add(iso(to));
     }
 
     final whereSql = where.isEmpty ? '' : 'WHERE ${where.join(' AND ')}';
@@ -1844,7 +1844,7 @@ class SyncRepository {
   }) async {
     final db = await _db;
     final args = <Object?>[];
-    String _iso(DateTime d) =>
+    String iso(DateTime d) =>
         DateFormat('yyyy-MM-dd').format(d);
 
     final base = '''
@@ -1876,11 +1876,11 @@ class SyncRepository {
     final where = <String>[];
     if (from != null) {
       where.add('date(d.transaction_date) >= ?');
-      args.add(_iso(from));
+      args.add(iso(from));
     }
     if (to != null) {
       where.add('date(d.transaction_date) <= ?');
-      args.add(_iso(to));
+      args.add(iso(to));
     }
     if (divisionId != null) {
       where.add('d.division_id = ?');
@@ -1911,7 +1911,7 @@ class SyncRepository {
     int offset = 0,
   }) async {
     final db = await _db;
-    String _iso(DateTime d) =>
+    String iso(DateTime d) =>
         DateFormat('yyyy-MM-dd').format(d);
 
     final whereParts = <String>[];
@@ -1944,11 +1944,11 @@ class SyncRepository {
     }
     if (from != null) {
       whereParts.add('date(dpmt.date) >= ?');
-      params.add(_iso(from));
+      params.add(iso(from));
     }
     if (to != null) {
       whereParts.add('date(dpmt.date) <= ?');
-      params.add(_iso(to));
+      params.add(iso(to));
     }
 
     final whereSql =
