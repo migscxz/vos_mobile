@@ -3,16 +3,20 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 
 import "../../app.dart";
-import "../../data/repositories/stock_transfer_repository.dart";
-import "../../data/repositories/sales_order_repository.dart";
-import "../../data/repositories/overtime_repository.dart";
+import "../../data/repositories/attendance_repository.dart";
 import "../../data/repositories/disbursement_repository.dart";
-
-import "stock_transfer/stock_transfer_view.dart";
-import "sales_order/sales_order_view.dart";
-import "overtime/overtime_view.dart";
-import "disbursement/disbursement_view.dart";
+import "../../data/repositories/dispatch_plan_repository.dart" as dp_repo;
+import "../../data/repositories/overtime_repository.dart";
+import "../../data/repositories/sales_order_repository.dart";
+import "../../data/repositories/stock_transfer_repository.dart";
+import "attendance/attendance_view.dart";
 import "disbursement/disbursement_models.dart";
+import "disbursement/disbursement_view.dart";
+import "dispatch_plan/dispatch_plan_models.dart";
+import "dispatch_plan/dispatch_plan_view.dart";
+import "overtime/overtime_view.dart";
+import "sales_order/sales_order_view.dart";
+import "stock_transfer/stock_transfer_view.dart";
 
 class ApprovalView extends ConsumerStatefulWidget {
   const ApprovalView({super.key});
@@ -42,6 +46,16 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
   String? _dbError;
   int _dbPendingCount = 0;
 
+  // Dispatch Plan badge
+  bool _dpLoading = true;
+  String? _dpError;
+  int _dpPendingCount = 0;
+
+  // Attendance badge
+  bool _atLoading = true;
+  String? _atError;
+  int _atPendingCount = 0;
+
   @override
   void initState() {
     super.initState();
@@ -61,6 +75,12 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
 
       _dbLoading = true;
       _dbError = null;
+
+      _dpLoading = true;
+      _dpError = null;
+
+      _atLoading = true;
+      _atError = null;
     });
 
     final api = ref.read(apiClientProvider);
@@ -69,22 +89,34 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
     final soRepo = SalesOrderRepository(api);
     final otRepo = OvertimeRepository(api);
     final dbRepo = DisbursementRepository(api);
+    final dpRepo = dp_repo.DispatchPlanRepository(api);
+    final atRepo = AttendanceRepository(api);
 
     // Run in parallel, but isolate failures cleanly.
     final stFuture = stRepo.fetchRequestedHeaderCount();
-    final soFuture = soRepo.fetchSalesOrderCount(
-      status: SalesOrderRepository.soStatusForApproval,
-    );
+    final soFuture = soRepo.fetchSalesOrderCount(status: SalesOrderRepository.soStatusForApproval);
     final otFuture = otRepo.fetchOvertimePendingCount();
 
     // Pending disbursements: approver_id IS NULL AND date_approved IS NULL
     final dbFuture = dbRepo.fetchDisbursementCount(filter: DisbursementFilter.pending);
+
+    // Dispatch Plan: use paged fetch with limit=1 to get total count from meta
+    final dpFuture = dpRepo.fetchDispatchPlansPaged(
+      limit: 1,
+      offset: 0,
+      status: DispatchStatus.pending,
+    );
+
+    // Attendance: fetch pending count
+    final atFuture = atRepo.fetchAttendancePendingCount();
 
     final results = await Future.wait([
       stFuture.then<Object?>((v) => v).catchError((e) => e),
       soFuture.then<Object?>((v) => v).catchError((e) => e),
       otFuture.then<Object?>((v) => v).catchError((e) => e),
       dbFuture.then<Object?>((v) => v).catchError((e) => e),
+      dpFuture.then<Object?>((v) => v).catchError((e) => e),
+      atFuture.then<Object?>((v) => v).catchError((e) => e),
     ]);
 
     if (!mounted) return;
@@ -137,14 +169,48 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
       _dbError = dbRes.toString();
     }
 
+    // Dispatch Plan result
+    final dpRes = results[4];
+    if (dpRes is dp_repo.PagedResult) {
+      _dpPendingCount = dpRes.total;
+      _dpLoading = false;
+      _dpError = null;
+    } else {
+      _dpPendingCount = 0;
+      _dpLoading = false;
+      _dpError = dpRes.toString();
+    }
+
+    // Attendance result
+    final atRes = results[5];
+    if (atRes is int) {
+      _atPendingCount = atRes;
+      _atLoading = false;
+      _atError = null;
+    } else {
+      _atPendingCount = 0;
+      _atLoading = false;
+      _atError = atRes.toString();
+    }
+
     setState(() {});
   }
 
   int get _totalPending =>
-      _requestedCount + _soForApprovalCount + _otPendingCount + _dbPendingCount;
+      _requestedCount +
+      _soForApprovalCount +
+      _otPendingCount +
+      _dbPendingCount +
+      _dpPendingCount +
+      _atPendingCount;
 
   bool get _hasErrors =>
-      _stError != null || _soError != null || _otError != null || _dbError != null;
+      _stError != null ||
+      _soError != null ||
+      _otError != null ||
+      _dbError != null ||
+      _dpError != null ||
+      _atError != null;
 
   @override
   Widget build(BuildContext context) {
@@ -173,16 +239,18 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                       //   ),
                       // ),
                       const SizedBox(height: 8),
-                      if (_stLoading || _soLoading || _otLoading || _dbLoading)
+                      if (_stLoading ||
+                          _soLoading ||
+                          _otLoading ||
+                          _dbLoading ||
+                          _dpLoading ||
+                          _atLoading)
                         Row(
                           children: [
                             SizedBox(
                               width: 14,
                               height: 14,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: cs.primary,
-                              ),
+                              child: CircularProgressIndicator(strokeWidth: 2, color: cs.primary),
                             ),
                             const SizedBox(width: 8),
                             Text(
@@ -198,10 +266,7 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                         Row(
                           children: [
                             Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 6,
-                              ),
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                               decoration: BoxDecoration(
                                 color: _totalPending > 0
                                     ? cs.primaryContainer
@@ -250,7 +315,8 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                     child: Column(
                       children: [
                         if (_stError != null) _InlineError(message: "Stock Transfer: $_stError"),
-                        if (_stError != null && (_soError != null || _otError != null || _dbError != null))
+                        if (_stError != null &&
+                            (_soError != null || _otError != null || _dbError != null))
                           const SizedBox(height: 8),
                         if (_soError != null) _InlineError(message: "Sales Order: $_soError"),
                         if (_soError != null && (_otError != null || _dbError != null))
@@ -258,6 +324,10 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                         if (_otError != null) _InlineError(message: "Overtime: $_otError"),
                         if (_otError != null && _dbError != null) const SizedBox(height: 8),
                         if (_dbError != null) _InlineError(message: "Disbursement: $_dbError"),
+                        if (_dbError != null && _dpError != null) const SizedBox(height: 8),
+                        if (_dpError != null) _InlineError(message: "Dispatch Plan: $_dpError"),
+                        if (_dpError != null && _atError != null) const SizedBox(height: 8),
+                        if (_atError != null) _InlineError(message: "Attendance: $_atError"),
                       ],
                     ),
                   ),
@@ -277,9 +347,9 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                       loading: _stLoading,
                       badgeCount: _requestedCount,
                       onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(builder: (_) => const StockTransferView()),
-                        );
+                        Navigator.of(
+                          context,
+                        ).push(MaterialPageRoute(builder: (_) => const StockTransferView()));
                       },
                     ),
                     const SizedBox(height: 12),
@@ -292,9 +362,9 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                       loading: _soLoading,
                       badgeCount: _soForApprovalCount,
                       onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(builder: (_) => const SalesOrderApprovalView()),
-                        );
+                        Navigator.of(
+                          context,
+                        ).push(MaterialPageRoute(builder: (_) => const SalesOrderApprovalView()));
                       },
                     ),
                     const SizedBox(height: 12),
@@ -307,9 +377,9 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                       loading: _otLoading,
                       badgeCount: _otPendingCount,
                       onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(builder: (_) => const OvertimeApprovalView()),
-                        );
+                        Navigator.of(
+                          context,
+                        ).push(MaterialPageRoute(builder: (_) => const OvertimeApprovalView()));
                       },
                     ),
                     const SizedBox(height: 12),
@@ -322,9 +392,39 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                       loading: _dbLoading,
                       badgeCount: _dbPendingCount,
                       onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(builder: (_) => const DisbursementApprovalView()),
-                        );
+                        Navigator.of(
+                          context,
+                        ).push(MaterialPageRoute(builder: (_) => const DisbursementApprovalView()));
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    _ApprovalCard(
+                      title: "Dispatch Plan",
+                      subtitle: "Review dispatch plans awaiting approval",
+                      icon: Icons.local_shipping_rounded,
+                      iconColor: const Color(0xFFF59E0B),
+                      iconBackground: const Color(0xFFFFFBEB),
+                      loading: _dpLoading,
+                      badgeCount: _dpPendingCount,
+                      onTap: () {
+                        Navigator.of(
+                          context,
+                        ).push(MaterialPageRoute(builder: (_) => const DispatchPlanView()));
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    _ApprovalCard(
+                      title: "Attendance",
+                      subtitle: "Review attendance discrepancies",
+                      icon: Icons.access_time_rounded,
+                      iconColor: const Color(0xFFDC2626),
+                      iconBackground: const Color(0xFFFEE2E2),
+                      loading: _atLoading,
+                      badgeCount: _atPendingCount,
+                      onTap: () {
+                        Navigator.of(
+                          context,
+                        ).push(MaterialPageRoute(builder: (_) => const AttendanceApprovalView()));
                       },
                     ),
                   ]),
@@ -353,18 +453,11 @@ class _InlineError extends StatelessWidget {
       decoration: BoxDecoration(
         color: cs.errorContainer,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: cs.error.withOpacity(0.2),
-          width: 1,
-        ),
+        border: Border.all(color: cs.error.withOpacity(0.2), width: 1),
       ),
       child: Row(
         children: [
-          Icon(
-            Icons.error_outline_rounded,
-            color: cs.error,
-            size: 20,
-          ),
+          Icon(Icons.error_outline_rounded, color: cs.error, size: 20),
           const SizedBox(width: 12),
           Expanded(
             child: Text(
@@ -416,10 +509,7 @@ class _ApprovalCard extends StatelessWidget {
           decoration: BoxDecoration(
             color: cs.surface,
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: cs.outlineVariant.withOpacity(0.5),
-              width: 1,
-            ),
+            border: Border.all(color: cs.outlineVariant.withOpacity(0.5), width: 1),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withOpacity(0.03),
@@ -440,11 +530,7 @@ class _ApprovalCard extends StatelessWidget {
                     color: iconBackground,
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: Icon(
-                    icon,
-                    color: iconColor,
-                    size: 28,
-                  ),
+                  child: Icon(icon, color: iconColor, size: 28),
                 ),
                 const SizedBox(width: 16),
 
@@ -466,10 +552,7 @@ class _ApprovalCard extends StatelessWidget {
                           ),
                           if (!loading && badgeCount > 0)
                             Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                               decoration: BoxDecoration(
                                 color: cs.primaryContainer,
                                 borderRadius: BorderRadius.circular(12),
@@ -501,10 +584,7 @@ class _ApprovalCard extends StatelessWidget {
                             SizedBox(
                               width: 12,
                               height: 12,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: cs.primary,
-                              ),
+                              child: CircularProgressIndicator(strokeWidth: 2, color: cs.primary),
                             ),
                             const SizedBox(width: 8),
                             Text(
@@ -529,13 +609,9 @@ class _ApprovalCard extends StatelessWidget {
                             ),
                             const SizedBox(width: 6),
                             Text(
-                              badgeCount == 0
-                                  ? "No pending requests"
-                                  : "$badgeCount pending",
+                              badgeCount == 0 ? "No pending requests" : "$badgeCount pending",
                               style: theme.textTheme.labelSmall?.copyWith(
-                                color: badgeCount > 0
-                                    ? iconColor
-                                    : cs.onSurfaceVariant,
+                                color: badgeCount > 0 ? iconColor : cs.onSurfaceVariant,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),

@@ -2,20 +2,20 @@
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 
-import "core/network/api_client.dart";
 import "core/auth/auth_storage.dart";
+import "core/network/api_client.dart";
+import "core/theme/app_theme.dart";
 import "data/repositories/auth_repository.dart";
 import "ui/auth/login_page.dart";
 import "ui/shell/shell.dart";
-import "core/theme/app_theme.dart";
 
 // -------------------------
 // Providers
 // -------------------------
 
 final apiClientProvider = Provider<ApiClient>((ref) {
-  // ApiClient is tokenless at creation; AuthRepository.restoreSession/login injects token later.
-  return ApiClient(baseUrl: "http://goatedcodoer:8056");
+  // ApiClient with static token for Directus access
+  return ApiClient(baseUrl: "http://goatedcodoer:8091", token: "rTilKSsclzuQW8WfQWK1ba8wrD_LetNn");
 });
 
 final authStorageProvider = Provider<AuthStorage>((ref) {
@@ -58,9 +58,7 @@ class _AuthGate extends ConsumerWidget {
       future: ref.read(authRepositoryProvider).restoreSession(),
       builder: (context, snap) {
         if (!snap.hasData) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
+          return const Scaffold(body: Center(child: CircularProgressIndicator()));
         }
         final ok = snap.data ?? false;
         return ok ? const Shell() : const LoginPage();

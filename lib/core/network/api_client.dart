@@ -8,7 +8,7 @@ class ApiClient {
   ApiClient._(this._dio, this.baseUrl);
 
   factory ApiClient({
-    String baseUrl = "http://goatedcodoer:8056",
+    String baseUrl = "http://goatedcodoer:8091",
     String? token,
   }) {
     final dio = Dio(
@@ -229,8 +229,7 @@ class ApiClient {
     final res = await patchJson(path, body: data);
     final d = res["data"];
     if (d is Map) return Map<String, dynamic>.from(d);
-    return res;
-    return const {};
+    return res; // Return the full response if data is not a map
   }
 
   Future<void> deleteJson(
