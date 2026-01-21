@@ -56,6 +56,18 @@ class _AttendanceApprovalSheetState extends ConsumerState<AttendanceApprovalShee
     });
   }
 
+  void _toggleSelectAll(bool selectAll) {
+    setState(() {
+      if (selectAll) {
+        _selectedLogIds.addAll(
+          widget.group.pendingApprovals.map((approval) => approval.approvalId),
+        );
+      } else {
+        _selectedLogIds.clear();
+      }
+    });
+  }
+
   Future<void> _approveSelected() async {
     if (_processing || _selectedLogIds.isEmpty) return;
 
@@ -255,6 +267,13 @@ class _AttendanceApprovalSheetState extends ConsumerState<AttendanceApprovalShee
                       _SectionHeader(
                         title: "Pending Approvals",
                         subtitle: "Select the attendance records to approve",
+                        trailing: canApproveThisDepartment
+                            ? Checkbox(
+                                value:
+                                    _selectedLogIds.length == widget.group.pendingApprovals.length,
+                                onChanged: (selected) => _toggleSelectAll(selected ?? false),
+                              )
+                            : null,
                       ),
                       const SizedBox(height: 10),
                       ...widget.group.pendingApprovals.map(

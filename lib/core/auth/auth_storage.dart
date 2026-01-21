@@ -1,4 +1,5 @@
 import "dart:convert";
+
 import "package:crypto/crypto.dart";
 import "package:shared_preferences/shared_preferences.dart";
 
@@ -18,20 +19,20 @@ class CachedUser {
   });
 
   Map<String, dynamic> toJson() => {
-        "user_id": userId,
-        "user_email": email,
-        "password_hash": passwordHash,
-        "user_fname": fname,
-        "user_lname": lname,
-      };
+    "user_id": userId,
+    "user_email": email,
+    "password_hash": passwordHash,
+    "user_fname": fname,
+    "user_lname": lname,
+  };
 
   static CachedUser fromJson(Map<String, dynamic> j) => CachedUser(
-        userId: (j["user_id"] as num).toInt(),
-        email: (j["user_email"] ?? "").toString(),
-        passwordHash: (j["password_hash"] ?? "").toString(),
-        fname: j["user_fname"]?.toString(),
-        lname: j["user_lname"]?.toString(),
-      );
+    userId: (j["user_id"] as num).toInt(),
+    email: (j["user_email"] ?? "").toString(),
+    passwordHash: (j["password_hash"] ?? "").toString(),
+    fname: j["user_fname"]?.toString(),
+    lname: j["user_lname"]?.toString(),
+  );
 }
 
 class AuthStorage {
@@ -111,10 +112,7 @@ class AuthStorage {
       user,
     ];
 
-    await sp.setString(
-      _kCachedUsers,
-      jsonEncode(updated.map((e) => e.toJson()).toList()),
-    );
+    await sp.setString(_kCachedUsers, jsonEncode(updated.map((e) => e.toJson()).toList()));
   }
 
   Future<void> clearAll() async {
@@ -123,6 +121,6 @@ class AuthStorage {
 
     // NOTE: keep cached users to allow offline login after logout.
     // If you want logout to remove offline login too, uncomment:
-    // await sp.remove(_kCachedUsers);
+    await sp.remove(_kCachedUsers);
   }
 }
