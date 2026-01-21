@@ -302,6 +302,29 @@ class AttendanceRepository {
     int workMinutes = 0;
     int overtimeMinutes = 0;
 
+    // Calculate scheduled work hours (workEnd - workStart - lunch break)
+    final scheduledWorkMins = (workEndMins - workStartMins - 60).clamp(0, 480); // Max 8 hours
+
+    // Check for approved overtime request first (handle 403 gracefully)
+    bool hasApprovedOvertime = false;
+    try {
+      final otJson = await _api.getJson(
+        "/items/$_overtimeCollection",
+        query: {
+          "limit": "1",
+          "filter[user_id][_eq]": employeeId.toString(),
+          "filter[request_date][_eq]": dateScheduleIso,
+          "filter[status][_eq]": "approved",
+          "fields": "ot_to",
+        },
+      );
+      final otData = _readDataList(otJson).firstOrNull;
+      hasApprovedOvertime = otData != null;
+    } catch (e) {
+      // If we can't access overtime_request (403), assume no overtime
+      hasApprovedOvertime = false;
+    }
+
     if (timeOut == null) {
       if (isToday) {
         // If schedule date is today and not timed out, do not compute work_minutes yet
@@ -319,13 +342,21 @@ class AttendanceRepository {
       // 3. work_minutes
       final effectiveStartMins = timeInMins > workStartMins ? timeInMins : workStartMins;
       final grossDurationMins = timeOutMins - effectiveStartMins;
-      workMinutes = grossDurationMins > 0
+      final calculatedWorkMins = grossDurationMins > 0
           ? (grossDurationMins - 60).clamp(0, double.infinity).toInt()
           : 0;
 
+      // Cap work minutes at scheduled work hours only if overtime is not approved
+      if (!hasApprovedOvertime) {
+        workMinutes = calculatedWorkMins > scheduledWorkMins
+            ? scheduledWorkMins
+            : calculatedWorkMins;
+      } else {
+        workMinutes = calculatedWorkMins; // Allow exceeding scheduled hours if overtime is approved
+      }
+
       // 4. overtime_minutes
-      // Check for approved overtime request (handle 403 gracefully)
-      try {
+      if (hasApprovedOvertime) {
         final otJson = await _api.getJson(
           "/items/$_overtimeCollection",
           query: {
@@ -355,9 +386,6 @@ class AttendanceRepository {
             }
           }
         }
-      } catch (e) {
-        // If we can't access overtime_request (403), assume no overtime
-        overtimeMinutes = 0;
       }
     }
 
