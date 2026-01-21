@@ -60,6 +60,9 @@ class AttendanceRepository {
     String? search,
     required int limit,
     required int offset,
+    int? departmentFilter, // Filter by specific department (for permission-based access)
+    bool allowAllDepartments = false, // Allow access to all departments (for super admin)
+    List<int>? allowedDepartmentIds, // List of department IDs user can access
   }) async {
     final q = (search ?? "").trim();
 
@@ -74,6 +77,11 @@ class AttendanceRepository {
     final st = (status ?? "").trim().toLowerCase();
     if (st.isNotEmpty) {
       query["filter[approval_status][_eq]"] = st;
+    }
+
+    // Apply department-based permissions filtering
+    if (allowedDepartmentIds != null && allowedDepartmentIds.isNotEmpty) {
+      query["filter[department_id][_in]"] = allowedDepartmentIds.join(",");
     }
 
     if (q.isNotEmpty) {

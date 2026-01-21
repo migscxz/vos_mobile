@@ -5,6 +5,7 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 
 import "../../../app.dart"; // apiClientProvider
+import "../../../core/auth/user_permissions.dart";
 import "../../../data/repositories/attendance_repository.dart" hide formatTimeOfDay;
 import "attendance_model.dart";
 import 'attendance_sheet.dart';
@@ -29,6 +30,8 @@ class _AttendanceApprovalViewState extends ConsumerState<AttendanceApprovalView>
 
   late final AttendanceRepository _repo;
 
+  AttendancePermission? _userPermission;
+
   final List<AttendanceApprovalGroup> _groups = [];
   final int _limit = 20;
   int _offset = 0;
@@ -44,12 +47,26 @@ class _AttendanceApprovalViewState extends ConsumerState<AttendanceApprovalView>
     }).toList();
   }
 
+  int get _totalPendingApprovals {
+    final groups = _query.isNotEmpty ? _filteredGroups : _groups;
+    return groups.fold(0, (sum, group) => sum + group.pendingCount);
+  }
+
   @override
   void initState() {
     super.initState();
     _repo = AttendanceRepository(ref.read(apiClientProvider));
     _scrollCtrl.addListener(_onScroll);
-    _reload();
+    _loadUserPermissionAndData();
+  }
+
+  Future<void> _loadUserPermissionAndData() async {
+    final permission = await _getCurrentUserPermission();
+    setState(() => _userPermission = permission);
+
+    if (permission != AttendancePermission.none) {
+      _reload();
+    }
   }
 
   @override
@@ -81,6 +98,40 @@ class _AttendanceApprovalViewState extends ConsumerState<AttendanceApprovalView>
     });
   }
 
+  Future<List<int>?> _getAllowedDepartmentIds() async {
+    try {
+      final service = ref.read(userPermissionsServiceProvider);
+      final user = await service.getCurrentUser();
+      if (user == null) return null;
+
+      final permission = user.getAttendancePermission();
+      switch (permission) {
+        case AttendancePermission.none:
+          return [];
+        case AttendancePermission.readOwnDepartment:
+        case AttendancePermission.approveOwnDepartment:
+          return user.departmentId != null ? [user.departmentId!] : [];
+        case AttendancePermission.readAllDepartments:
+        case AttendancePermission.approveAllDepartments:
+          return null; // null means all departments
+      }
+    } catch (e) {
+      debugPrint('Error getting user permissions: $e');
+      return null;
+    }
+  }
+
+  Future<AttendancePermission> _getCurrentUserPermission() async {
+    try {
+      final service = ref.read(userPermissionsServiceProvider);
+      final user = await service.getCurrentUser();
+      return user?.getAttendancePermission() ?? AttendancePermission.none;
+    } catch (e) {
+      debugPrint('Error getting user permission: $e');
+      return AttendancePermission.none;
+    }
+  }
+
   Future<void> _reload() async {
     setState(() {
       _loading = true;
@@ -91,11 +142,13 @@ class _AttendanceApprovalViewState extends ConsumerState<AttendanceApprovalView>
     });
 
     try {
+      final allowedDepartmentIds = await _getAllowedDepartmentIds();
       final page = await _repo.fetchAttendanceApprovalsPaged(
         status: "pending",
         search: null,
         limit: _initialLimit, // Load all employees initially
         offset: _offset,
+        allowedDepartmentIds: allowedDepartmentIds,
       );
 
       if (!mounted) return;
@@ -237,7 +290,7 @@ class _AttendanceApprovalViewState extends ConsumerState<AttendanceApprovalView>
           const SizedBox(height: 12),
           if (!_loading)
             Text(
-              "${_query.isNotEmpty ? _filteredGroups.length : _groups.length} employee(s)",
+              "$_totalPendingApprovals pending approval${_totalPendingApprovals != 1 ? 's' : ''}",
               style: TextStyle(
                 fontSize: 12,
                 color: cs.onSurfaceVariant,

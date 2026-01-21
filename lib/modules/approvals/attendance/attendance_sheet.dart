@@ -3,6 +3,7 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 
 import "../../../app.dart"; // apiClientProvider, authRepositoryProvider
+import "../../../core/auth/user_permissions.dart";
 import "../../../data/repositories/attendance_repository.dart" hide formatTimeOfDay;
 import "attendance_model.dart";
 
@@ -19,6 +20,7 @@ class _AttendanceApprovalSheetState extends ConsumerState<AttendanceApprovalShee
   bool _processing = false;
   String? _error;
   final Set<int> _selectedLogIds = {};
+  final bool _canApprove = false;
 
   Future<_ApproverInfo> _loadApproverInfo(AttendanceRepository attendanceRepo) async {
     final approverIdRaw = await ref.read(authRepositoryProvider).getCurrentAppUserId();
@@ -63,6 +65,19 @@ class _AttendanceApprovalSheetState extends ConsumerState<AttendanceApprovalShee
     });
 
     try {
+      // Check user permissions before approving
+      final service = ref.read(userPermissionsServiceProvider);
+      final user = await service.getCurrentUser();
+      final departmentId = widget.group.pendingApprovals.first.departmentId;
+      if (user == null || !user.canApproveDepartment(departmentId)) {
+        setState(() {
+          _error =
+              "You do not have permission to approve attendance for this department. Only admins can approve.";
+          _processing = false;
+        });
+        return;
+      }
+
       final api = ref.read(apiClientProvider);
       final attendanceRepo = AttendanceRepository(api);
 
@@ -105,9 +120,20 @@ class _AttendanceApprovalSheetState extends ConsumerState<AttendanceApprovalShee
 
   @override
   Widget build(BuildContext context) {
+    final userAsync = ref.watch(currentUserProvider);
+    return userAsync.when(
+      data: (user) => _buildContent(context, user),
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (err, stack) => Center(child: Text('Error loading user: $err')),
+    );
+  }
+
+  Widget _buildContent(BuildContext context, UserData? user) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
-
+    final departmentId = widget.group.pendingApprovals.first.departmentId;
+    final canApproveThisDepartment = user?.canApproveDepartment(departmentId) ?? false;
+    if (!canApproveThisDepartment) _selectedLogIds.clear();
     return Container(
       color: Colors.transparent,
       child: DraggableScrollableSheet(
@@ -237,37 +263,39 @@ class _AttendanceApprovalSheetState extends ConsumerState<AttendanceApprovalShee
                           child: _PendingApprovalCard(
                             approval: approval,
                             isSelected: _selectedLogIds.contains(approval.approvalId),
-                            onToggle: () => _toggleSelection(approval.approvalId),
+                            onToggle: canApproveThisDepartment
+                                ? () => _toggleSelection(approval.approvalId)
+                                : null,
                           ),
                         ),
                       ),
                     ],
                   ),
                 ),
-
                 // Bottom CTA (sticky)
-                SafeArea(
-                  top: false,
-                  child: Container(
-                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
-                    decoration: BoxDecoration(
-                      color: cs.surface,
-                      border: Border(top: BorderSide(color: cs.outlineVariant.withOpacity(0.45))),
-                    ),
-                    child: FilledButton.icon(
-                      onPressed: _processing || _selectedLogIds.isEmpty ? null : _approveSelected,
-                      icon: _processing
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.check_circle_outline),
-                      label: const Text("Approve Selected"),
-                      style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+                if (canApproveThisDepartment)
+                  SafeArea(
+                    top: false,
+                    child: Container(
+                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+                      decoration: BoxDecoration(
+                        color: cs.surface,
+                        border: Border(top: BorderSide(color: cs.outlineVariant.withOpacity(0.45))),
+                      ),
+                      child: FilledButton.icon(
+                        onPressed: _processing || _selectedLogIds.isEmpty ? null : _approveSelected,
+                        icon: _processing
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.check_circle_outline),
+                        label: const Text("Approve Selected"),
+                        style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+                      ),
                     ),
                   ),
-                ),
               ],
             ),
           );
@@ -439,13 +467,9 @@ class _Pill extends StatelessWidget {
 class _PendingApprovalCard extends StatelessWidget {
   final AttendanceApprovalHeader approval;
   final bool isSelected;
-  final VoidCallback onToggle;
+  final VoidCallback? onToggle;
 
-  const _PendingApprovalCard({
-    required this.approval,
-    required this.isSelected,
-    required this.onToggle,
-  });
+  const _PendingApprovalCard({required this.approval, required this.isSelected, this.onToggle});
 
   String _getWorkMinutesDisplay(AttendanceApprovalHeader approval) {
     final todayIso = DateTime.now().toIso8601String().substring(0, 10);
@@ -467,7 +491,7 @@ class _PendingApprovalCard extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       child: Row(
         children: [
-          Checkbox(value: isSelected, onChanged: (_) => onToggle()),
+          Checkbox(value: isSelected, onChanged: onToggle != null ? (_) => onToggle!() : null),
           const SizedBox(width: 12),
           Expanded(
             child: Column(

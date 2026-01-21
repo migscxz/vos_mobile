@@ -3,6 +3,7 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 
 import "../../app.dart";
+import "../../core/auth/user_permissions.dart";
 import "../../data/repositories/attendance_repository.dart";
 import "../../data/repositories/disbursement_repository.dart";
 import "../../data/repositories/dispatch_plan_repository.dart" as dp_repo;
@@ -62,6 +63,30 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
     _loadCounts();
   }
 
+  Future<List<int>?> _getAllowedDepartmentIds() async {
+    try {
+      final service = ref.read(userPermissionsServiceProvider);
+      final user = await service.getCurrentUser();
+      if (user == null) return null;
+
+      final permission = user.getAttendancePermission();
+      switch (permission) {
+        case AttendancePermission.none:
+          return [];
+        case AttendancePermission.readOwnDepartment:
+        case AttendancePermission.approveOwnDepartment:
+          return user.departmentId != null ? [user.departmentId!] : [];
+        case AttendancePermission.readAllDepartments:
+        case AttendancePermission.approveAllDepartments:
+          return null; // null means all departments
+      }
+    } catch (e) {
+      debugPrint('Error getting user permissions: $e');
+      return null;
+    }
+    return null;
+  }
+
   Future<void> _loadCounts() async {
     setState(() {
       _stLoading = true;
@@ -107,8 +132,31 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
       status: DispatchStatus.pending,
     );
 
-    // Attendance: fetch pending count
-    final atFuture = atRepo.fetchAttendancePendingCount();
+    // Attendance: fetch pending count filtered by user permissions (same as attendance_view)
+    final atFuture = _getAllowedDepartmentIds()
+        .then((allowedIds) async {
+          final page = await atRepo.fetchAttendanceApprovalsPaged(
+            status: "pending",
+            search: null,
+            limit: -1, // Load all to match attendance_view logic
+            offset: 0,
+            allowedDepartmentIds: allowedIds,
+          );
+
+          // Group by employee and sum pendingCount, same as attendance_view
+          final Map<int, List<dynamic>> grouped = {};
+          for (final item in page.items) {
+            grouped.putIfAbsent(item.employeeId, () => []).add(item);
+          }
+
+          int totalPending = 0;
+          for (final entries in grouped.values) {
+            totalPending += entries.length;
+          }
+
+          return totalPending;
+        })
+        .catchError((e) => 0);
 
     final results = await Future.wait([
       stFuture.then<Object?>((v) => v).catchError((e) => e),
