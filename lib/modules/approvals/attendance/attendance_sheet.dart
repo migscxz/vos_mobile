@@ -256,7 +256,13 @@ class _AttendanceApprovalSheetState extends ConsumerState<AttendanceApprovalShee
                     ),
                     child: FilledButton.icon(
                       onPressed: _processing || _selectedLogIds.isEmpty ? null : _approveSelected,
-                      icon: const Icon(Icons.check_circle_outline),
+                      icon: _processing
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.check_circle_outline),
                       label: const Text("Approve Selected"),
                       style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
                     ),
@@ -487,7 +493,27 @@ class _PendingApprovalCard extends StatelessWidget {
                       child: _MiniKV(label: "Late Minutes", value: "${approval.lateMinutes}"),
                     ),
                     Expanded(
-                      child: _MiniKV(label: "Work Minutes", value: approval.workMinutesLabel),
+                      child: _MiniKV(
+                        label: "Work Minutes",
+                        value: approval.overtimeMinutes == 0 ? "8h" : approval.workMinutesLabel,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _MiniKV(
+                        label: "Undertime Minutes",
+                        value: "${approval.undertimeMinutes}",
+                      ),
+                    ),
+                    Expanded(
+                      child: _MiniKV(
+                        label: "Overtime Minutes",
+                        value: "${approval.overtimeMinutes}",
+                      ),
                     ),
                   ],
                 ),
