@@ -447,6 +447,17 @@ class _PendingApprovalCard extends StatelessWidget {
     required this.onToggle,
   });
 
+  String _getWorkMinutesDisplay(AttendanceApprovalHeader approval) {
+    final todayIso = DateTime.now().toIso8601String().substring(0, 10);
+    final isToday = approval.dateSchedule.toIso8601String().substring(0, 10) == todayIso;
+
+    if (isToday && approval.actualEnd == null && approval.workMinutes == 0) {
+      return "Not computed yet";
+    }
+
+    return approval.workMinutesLabel;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -495,7 +506,7 @@ class _PendingApprovalCard extends StatelessWidget {
                     Expanded(
                       child: _MiniKV(
                         label: "Work Minutes",
-                        value: approval.overtimeMinutes == 0 ? "8h" : approval.workMinutesLabel,
+                        value: _getWorkMinutesDisplay(approval),
                       ),
                     ),
                   ],

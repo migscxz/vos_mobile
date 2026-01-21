@@ -263,7 +263,7 @@ class AttendanceRepository {
     final workStart = schedule.workStart;
     final workEnd = schedule.workEnd;
 
-    if (timeIn == null || timeOut == null || workStart == null || workEnd == null) {
+    if (timeIn == null || workStart == null || workEnd == null) {
       return const _ComputedApprovalFields(
         lateMinutes: 0,
         undertimeMinutes: 0,
@@ -278,60 +278,79 @@ class AttendanceRepository {
     int toMinutesFromDateTime(DateTime dt) => dt.hour * 60 + dt.minute;
 
     final timeInMins = toMinutesFromDateTime(timeIn);
-    final timeOutMins = toMinutesFromDateTime(timeOut);
     final workStartMins = toMinutes(workStart);
     final workEndMins = toMinutes(workEnd);
 
-    // 1. late_minutes
-    final lateMinutes = timeInMins > workStartMins ? timeInMins - workStartMins : 0;
+    // Check if schedule date is today
+    final todayIso = DateTime.now().toIso8601String().substring(0, 10);
+    final isToday = dateScheduleIso == todayIso;
 
-    // 2. undertime_minutes
-    final undertimeMinutes = timeOutMins < workEndMins ? workEndMins - timeOutMins : 0;
+    // 1. late_minutes (calculate even if not timed out, unless today and no time out)
+    final lateMinutes = (isToday && timeOut == null)
+        ? 0
+        : (timeInMins > workStartMins ? timeInMins - workStartMins : 0);
 
-    // 3. work_minutes
-    final effectiveStartMins = timeInMins > workStartMins ? timeInMins : workStartMins;
-    final grossDurationMins = timeOutMins - effectiveStartMins;
-    final workMinutes = grossDurationMins > 0
-        ? (grossDurationMins - 60).clamp(0, double.infinity).toInt()
-        : 0;
-
-    // 4. overtime_minutes
+    int undertimeMinutes = 0;
+    int workMinutes = 0;
     int overtimeMinutes = 0;
 
-    // Check for approved overtime request (handle 403 gracefully)
-    try {
-      final otJson = await _api.getJson(
-        "/items/$_overtimeCollection",
-        query: {
-          "limit": "1",
-          "filter[user_id][_eq]": employeeId.toString(),
-          "filter[request_date][_eq]": dateScheduleIso,
-          "filter[status][_eq]": "approved",
-          "fields": "ot_to",
-        },
-      );
-      final otData = _readDataList(otJson).firstOrNull;
+    if (timeOut == null) {
+      if (isToday) {
+        // If schedule date is today and not timed out, do not compute work_minutes yet
+        workMinutes = 0;
+      } else {
+        // If not timed out within schedule day (past date), set work_minutes to 4 hours (240 minutes)
+        workMinutes = 240;
+      }
+    } else {
+      final timeOutMins = toMinutesFromDateTime(timeOut);
 
-      if (otData != null) {
-        final otToRaw = otData["ot_to"]?.toString();
-        if (otToRaw != null) {
-          final otTo = parseTimeOfDay(otToRaw);
-          final otToMins = toMinutes(otTo);
+      // 2. undertime_minutes
+      undertimeMinutes = timeOutMins < workEndMins ? workEndMins - timeOutMins : 0;
 
-          // Actual OT duration from work_end to time_out
-          final actualOtMins = timeOutMins > workEndMins ? timeOutMins - workEndMins : 0;
+      // 3. work_minutes
+      final effectiveStartMins = timeInMins > workStartMins ? timeInMins : workStartMins;
+      final grossDurationMins = timeOutMins - effectiveStartMins;
+      workMinutes = grossDurationMins > 0
+          ? (grossDurationMins - 60).clamp(0, double.infinity).toInt()
+          : 0;
 
-          // Apply 90-minute minimum
-          if (actualOtMins >= 90) {
-            // Cap at approved amount: from work_end to min(time_out, ot_to)
-            final approvedDuration = otToMins > workEndMins ? otToMins - workEndMins : 0;
-            overtimeMinutes = (actualOtMins < approvedDuration) ? actualOtMins : approvedDuration;
+      // 4. overtime_minutes
+      // Check for approved overtime request (handle 403 gracefully)
+      try {
+        final otJson = await _api.getJson(
+          "/items/$_overtimeCollection",
+          query: {
+            "limit": "1",
+            "filter[user_id][_eq]": employeeId.toString(),
+            "filter[request_date][_eq]": dateScheduleIso,
+            "filter[status][_eq]": "approved",
+            "fields": "ot_to",
+          },
+        );
+        final otData = _readDataList(otJson).firstOrNull;
+
+        if (otData != null) {
+          final otToRaw = otData["ot_to"]?.toString();
+          if (otToRaw != null) {
+            final otTo = parseTimeOfDay(otToRaw);
+            final otToMins = toMinutes(otTo);
+
+            // Actual OT duration from work_end to time_out
+            final actualOtMins = timeOutMins > workEndMins ? timeOutMins - workEndMins : 0;
+
+            // Apply 90-minute minimum
+            if (actualOtMins >= 90) {
+              // Cap at approved amount: from work_end to min(time_out, ot_to)
+              final approvedDuration = otToMins > workEndMins ? otToMins - workEndMins : 0;
+              overtimeMinutes = (actualOtMins < approvedDuration) ? actualOtMins : approvedDuration;
+            }
           }
         }
+      } catch (e) {
+        // If we can't access overtime_request (403), assume no overtime
+        overtimeMinutes = 0;
       }
-    } catch (e) {
-      // If we can't access overtime_request (403), assume no overtime
-      overtimeMinutes = 0;
     }
 
     return _ComputedApprovalFields(

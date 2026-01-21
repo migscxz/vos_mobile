@@ -15,5 +15,7 @@
 - [x] Add undertime_minutes and overtime_minutes displays in attendance_sheet.dart
 - [x] Revise work_minutes logic: show "8h" if overtimeMinutes == 0, else show actual workMinutesLabel
 - [x] Ensure late_minutes are displayed even if employee hasn't clocked out
+- [x] If the user did not time out within the schedule day, set work_minutes to 4 hours automatically
+- [x] Show "Not computed yet" message in the sheet for today's records that haven't been timed out yet
 - [x] Add loading spinner to "Approve Selected" button during processing
 - [x] Test the UI changes and button behavior
