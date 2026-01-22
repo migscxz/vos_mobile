@@ -37,8 +37,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
 
   int _lineCursor = 0;
   final Set<String> _seenOrderNos = <String>{};
-  final Map<String, List<StockTransferRow>> _itemsByOrder =
-      <String, List<StockTransferRow>>{};
+  final Map<String, List<StockTransferRow>> _itemsByOrder = <String, List<StockTransferRow>>{};
   final List<StockTransferHeader> _headers = <StockTransferHeader>[];
 
   bool _autoFilling = false;
@@ -138,9 +137,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
 
   void _scheduleViewportFill() {
     if (_autoFilling) return;
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => _autoFillViewportIfNeeded(),
-    );
+    WidgetsBinding.instance.addPostFrameCallback((_) => _autoFillViewportIfNeeded());
   }
 
   Future<void> _autoFillViewportIfNeeded() async {
@@ -229,8 +226,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
     for (final p in products) {
       final id = _asInt(p["product_id"]);
       if (id == null) continue;
-      productNameById[id] = (p["product_name"]?.toString() ?? "Unknown Product")
-          .trim();
+      productNameById[id] = (p["product_name"]?.toString() ?? "Unknown Product").trim();
     }
 
     final branchNameById = <int, String>{};
@@ -271,12 +267,8 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
 
         final sb = _asInt(m["source_branch"]);
         final tb = _asInt(m["target_branch"]);
-        final sourceName = sb != null
-            ? (branchNameById[sb] ?? "Unknown")
-            : "Unknown";
-        final targetName = tb != null
-            ? (branchNameById[tb] ?? "Unknown")
-            : "Unknown";
+        final sourceName = sb != null ? (branchNameById[sb] ?? "Unknown") : "Unknown";
+        final targetName = tb != null ? (branchNameById[tb] ?? "Unknown") : "Unknown";
 
         final orderedQty = _asInt(m["ordered_quantity"]) ?? 0;
         final receivedQty = _asInt(m["received_quantity"]) ?? 0;
@@ -287,9 +279,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
             DateTime.fromMillisecondsSinceEpoch(0);
 
         final enc = _asInt(m["encoder_id"]);
-        final requesterName = enc != null
-            ? (userNameById[enc] ?? "Unknown")
-            : "Unknown";
+        final requesterName = enc != null ? (userNameById[enc] ?? "Unknown") : "Unknown";
         final remarks = (m["remarks"]?.toString() ?? "").trim();
 
         items.add(
@@ -327,15 +317,9 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
     if (mounted) setState(() {});
   }
 
-  StockTransferHeader _buildHeader(
-    String orderNo,
-    List<StockTransferRow> items,
-  ) {
-    final sorted = [...items]
-      ..sort((a, b) => a.productName.compareTo(b.productName));
-    final requestedAt = sorted
-        .map((e) => e.requestedAt)
-        .reduce((a, b) => a.isAfter(b) ? a : b);
+  StockTransferHeader _buildHeader(String orderNo, List<StockTransferRow> items) {
+    final sorted = [...items]..sort((a, b) => a.productName.compareTo(b.productName));
+    final requestedAt = sorted.map((e) => e.requestedAt).reduce((a, b) => a.isAfter(b) ? a : b);
     final requesterName = sorted.first.requesterName;
     final sourceBranchName = sorted.first.sourceBranchName;
     final targetBranchName = sorted.first.targetBranchName;
@@ -413,11 +397,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
                 padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
                 child: Text(
                   "Filter by Status",
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 20,
-                    color: cs.onSurface,
-                  ),
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 20, color: cs.onSurface),
                 ),
               ),
               ...StockTransferFilter.values.map((f) {
@@ -427,10 +407,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
                   child: InkWell(
                     onTap: () => Navigator.pop(ctx, f),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
-                        vertical: 16,
-                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
                       child: Row(
                         children: [
                           Container(
@@ -438,20 +415,14 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
                             height: 24,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: isSelected
-                                  ? cs.primary
-                                  : Colors.transparent,
+                              color: isSelected ? cs.primary : Colors.transparent,
                               border: Border.all(
                                 color: isSelected ? cs.primary : cs.outline,
                                 width: 2,
                               ),
                             ),
                             child: isSelected
-                                ? Icon(
-                                    Icons.check,
-                                    size: 16,
-                                    color: cs.onPrimary,
-                                  )
+                                ? Icon(Icons.check, size: 16, color: cs.onPrimary)
                                 : null,
                           ),
                           const SizedBox(width: 16),
@@ -460,12 +431,8 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
                               f.label,
                               style: TextStyle(
                                 fontSize: 16,
-                                fontWeight: isSelected
-                                    ? FontWeight.w600
-                                    : FontWeight.w500,
-                                color: isSelected
-                                    ? cs.onSurface
-                                    : cs.onSurfaceVariant,
+                                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                                color: isSelected ? cs.onSurface : cs.onSurfaceVariant,
                               ),
                             ),
                           ),
@@ -551,6 +518,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
             ),
           ],
         ),
+        actions: [IconButton(icon: const Icon(Icons.refresh), onPressed: () => _resetAndFetch())],
       ),
       body: Column(
         children: [
@@ -603,11 +571,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
               onChanged: _onSearchChanged,
               decoration: InputDecoration(
                 hintText: "Search ID, product, or branch...",
-                prefixIcon: Icon(
-                  Icons.search_rounded,
-                  color: cs.primary,
-                  size: 20,
-                ),
+                prefixIcon: Icon(Icons.search_rounded, color: cs.primary, size: 20),
                 suffixIcon: _searchCtrl.text.isNotEmpty
                     ? IconButton(
                         icon: const Icon(Icons.cancel, size: 18),
@@ -628,10 +592,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
               GestureDetector(
                 onTap: _showFilterMenu,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
                     border: Border.all(color: cs.outlineVariant),
                     borderRadius: BorderRadius.circular(8),
@@ -642,10 +603,7 @@ class _StockTransferViewState extends ConsumerState<StockTransferView> {
                       const SizedBox(width: 8),
                       Text(
                         searching ? "Search Results" : _selectedFilter.label,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                        ),
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
                       ),
                       const Icon(Icons.arrow_drop_down),
                     ],
@@ -679,11 +637,7 @@ class _StockTransferCard extends StatelessWidget {
   final bool enabled;
   final VoidCallback onTap;
 
-  const _StockTransferCard({
-    required this.header,
-    required this.enabled,
-    required this.onTap,
-  });
+  const _StockTransferCard({required this.header, required this.enabled, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -697,16 +651,10 @@ class _StockTransferCard extends StatelessWidget {
         color: cs.surface,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: enabled
-              ? cs.outlineVariant.withOpacity(0.5)
-              : cs.outlineVariant.withOpacity(0.2),
+          color: enabled ? cs.outlineVariant.withOpacity(0.5) : cs.outlineVariant.withOpacity(0.2),
         ),
         boxShadow: [
-          BoxShadow(
-            color: cs.shadow.withOpacity(0.03),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
+          BoxShadow(color: cs.shadow.withOpacity(0.03), blurRadius: 10, offset: const Offset(0, 4)),
         ],
       ),
       child: Material(
@@ -734,16 +682,11 @@ class _StockTransferCard extends StatelessWidget {
                         ),
                         Text(
                           _formatSimpleDate(header.requestedAt),
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: cs.onSurfaceVariant,
-                          ),
+                          style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
                         ),
                       ],
                     ),
-                    _StatusBadge(
-                      text: header.statusEnum.name.toUpperCase(),
-                      color: statusColor,
-                    ),
+                    _StatusBadge(text: header.statusEnum.name.toUpperCase(), color: statusColor),
                   ],
                 ),
                 const Padding(
@@ -754,16 +697,8 @@ class _StockTransferCard extends StatelessWidget {
                   children: [
                     Column(
                       children: [
-                        Icon(
-                          Icons.radio_button_checked,
-                          size: 12,
-                          color: cs.primary,
-                        ),
-                        Container(
-                          width: 1,
-                          height: 20,
-                          color: cs.outlineVariant,
-                        ),
+                        Icon(Icons.radio_button_checked, size: 12, color: cs.primary),
+                        Container(width: 1, height: 20, color: cs.outlineVariant),
                         Icon(Icons.location_on, size: 12, color: cs.secondary),
                       ],
                     ),
@@ -772,15 +707,9 @@ class _StockTransferCard extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _BranchRow(
-                            label: "FROM",
-                            name: header.sourceBranchName,
-                          ),
+                          _BranchRow(label: "FROM", name: header.sourceBranchName),
                           const SizedBox(height: 8),
-                          _BranchRow(
-                            label: "TO",
-                            name: header.targetBranchName,
-                          ),
+                          _BranchRow(label: "TO", name: header.targetBranchName),
                         ],
                       ),
                     ),
@@ -793,18 +722,12 @@ class _StockTransferCard extends StatelessWidget {
                     CircleAvatar(
                       radius: 10,
                       backgroundColor: cs.primaryContainer,
-                      child: Icon(
-                        Icons.person,
-                        size: 12,
-                        color: cs.onPrimaryContainer,
-                      ),
+                      child: Icon(Icons.person, size: 12, color: cs.onPrimaryContainer),
                     ),
                     const SizedBox(width: 6),
                     Text(
                       header.requesterName,
-                      style: theme.textTheme.labelMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                      style: theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold),
                     ),
                     const Spacer(),
                     if (enabled)
@@ -818,11 +741,7 @@ class _StockTransferCard extends StatelessWidget {
                               color: Colors.blue,
                             ),
                           ),
-                          Icon(
-                            Icons.chevron_right,
-                            size: 16,
-                            color: Colors.blue,
-                          ),
+                          Icon(Icons.chevron_right, size: 16, color: Colors.blue),
                         ],
                       ),
                   ],
@@ -905,11 +824,7 @@ class _ItemCountBadge extends StatelessWidget {
           ),
           Text(
             "ITEMS",
-            style: TextStyle(
-              fontSize: 8,
-              fontWeight: FontWeight.w900,
-              color: cs.onSurfaceVariant,
-            ),
+            style: TextStyle(fontSize: 8, fontWeight: FontWeight.w900, color: cs.onSurfaceVariant),
           ),
         ],
       ),
@@ -950,11 +865,7 @@ class _LoadingMoreIndicator extends StatelessWidget {
   Widget build(BuildContext context) => const Padding(
     padding: EdgeInsets.symmetric(vertical: 24),
     child: Center(
-      child: SizedBox(
-        width: 24,
-        height: 24,
-        child: CircularProgressIndicator(strokeWidth: 2),
-      ),
+      child: SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2)),
     ),
   );
 }

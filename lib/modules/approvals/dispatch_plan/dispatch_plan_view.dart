@@ -323,6 +323,7 @@ class _DispatchPlanViewState extends ConsumerState<DispatchPlanView> {
             ),
           ],
         ),
+        actions: [IconButton(icon: const Icon(Icons.refresh), onPressed: () => _resetAndFetch())],
       ),
       body: Column(
         children: [

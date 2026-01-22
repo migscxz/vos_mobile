@@ -340,6 +340,7 @@ class _AttendanceApprovalViewState extends ConsumerState<AttendanceApprovalView>
             ),
           ],
         ),
+        actions: [IconButton(icon: const Icon(Icons.refresh), onPressed: _reload)],
       ),
       body: Column(
         children: [

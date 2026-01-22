@@ -13,8 +13,7 @@ class OvertimeApprovalView extends ConsumerStatefulWidget {
   const OvertimeApprovalView({super.key});
 
   @override
-  ConsumerState<OvertimeApprovalView> createState() =>
-      _OvertimeApprovalViewState();
+  ConsumerState<OvertimeApprovalView> createState() => _OvertimeApprovalViewState();
 }
 
 class _OvertimeApprovalViewState extends ConsumerState<OvertimeApprovalView> {
@@ -152,8 +151,7 @@ class _OvertimeApprovalViewState extends ConsumerState<OvertimeApprovalView> {
       showDragHandle: true,
       builder: (ctx) {
         final cs = Theme.of(ctx).colorScheme;
-        final visible = OvertimeFilter.values
-            .toList(); // includes All + Cancelled if in enum
+        final visible = OvertimeFilter.values.toList(); // includes All + Cancelled if in enum
         return Material(
           color: cs.surface,
           child: ListView(
@@ -170,18 +168,12 @@ class _OvertimeApprovalViewState extends ConsumerState<OvertimeApprovalView> {
                 final isSelected = f == _selectedFilter;
                 return ListTile(
                   leading: Icon(
-                    isSelected
-                        ? Icons.check_circle_rounded
-                        : Icons.circle_outlined,
+                    isSelected ? Icons.check_circle_rounded : Icons.circle_outlined,
                     color: isSelected ? cs.primary : cs.onSurfaceVariant,
                   ),
                   title: Text(
                     f.label,
-                    style: TextStyle(
-                      fontWeight: isSelected
-                          ? FontWeight.w900
-                          : FontWeight.w700,
-                    ),
+                    style: TextStyle(fontWeight: isSelected ? FontWeight.w900 : FontWeight.w700),
                   ),
                   onTap: () => Navigator.pop(ctx, f),
                 );
@@ -241,11 +233,7 @@ class _OvertimeApprovalViewState extends ConsumerState<OvertimeApprovalView> {
               onChanged: _onSearchChanged,
               decoration: InputDecoration(
                 hintText: "Search employee, department, purpose, date...",
-                prefixIcon: Icon(
-                  Icons.search_rounded,
-                  color: cs.primary,
-                  size: 20,
-                ),
+                prefixIcon: Icon(Icons.search_rounded, color: cs.primary, size: 20),
                 suffixIcon: _searchCtrl.text.isNotEmpty
                     ? IconButton(
                         icon: const Icon(Icons.cancel, size: 18),
@@ -266,10 +254,7 @@ class _OvertimeApprovalViewState extends ConsumerState<OvertimeApprovalView> {
               GestureDetector(
                 onTap: _showFilterMenu,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
                     border: Border.all(color: cs.outlineVariant),
                     borderRadius: BorderRadius.circular(8),
@@ -280,10 +265,7 @@ class _OvertimeApprovalViewState extends ConsumerState<OvertimeApprovalView> {
                       const SizedBox(width: 8),
                       Text(
                         searching ? "Search Results" : _selectedFilter.label,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                        ),
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
                       ),
                       const Icon(Icons.arrow_drop_down),
                     ],
@@ -342,6 +324,7 @@ class _OvertimeApprovalViewState extends ConsumerState<OvertimeApprovalView> {
             ),
           ],
         ),
+        actions: [IconButton(icon: const Icon(Icons.refresh), onPressed: _reload)],
       ),
       body: Column(
         children: [
@@ -362,18 +345,13 @@ class _OvertimeApprovalViewState extends ConsumerState<OvertimeApprovalView> {
                             itemBuilder: (context, i) {
                               if (i == _items.length) {
                                 return Padding(
-                                  padding: const EdgeInsets.only(
-                                    top: 8,
-                                    bottom: 24,
-                                  ),
+                                  padding: const EdgeInsets.only(top: 8, bottom: 24),
                                   child: Center(
                                     child: _loadingMore
                                         ? const SizedBox(
                                             width: 22,
                                             height: 22,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                            ),
+                                            child: CircularProgressIndicator(strokeWidth: 2),
                                           )
                                         : (!_hasMore
                                               ? const Text("— end —")
@@ -411,11 +389,7 @@ class _OvertimeCard extends StatelessWidget {
   final bool enabled;
   final VoidCallback onTap;
 
-  const _OvertimeCard({
-    required this.header,
-    required this.enabled,
-    required this.onTap,
-  });
+  const _OvertimeCard({required this.header, required this.enabled, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -429,16 +403,10 @@ class _OvertimeCard extends StatelessWidget {
         color: cs.surface,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: enabled
-              ? cs.outlineVariant.withOpacity(0.5)
-              : cs.outlineVariant.withOpacity(0.2),
+          color: enabled ? cs.outlineVariant.withOpacity(0.5) : cs.outlineVariant.withOpacity(0.2),
         ),
         boxShadow: [
-          BoxShadow(
-            color: cs.shadow.withOpacity(0.03),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
+          BoxShadow(color: cs.shadow.withOpacity(0.03), blurRadius: 10, offset: const Offset(0, 4)),
         ],
       ),
       child: Material(
@@ -466,16 +434,11 @@ class _OvertimeCard extends StatelessWidget {
                         ),
                         Text(
                           _formatSimpleDate(header.requestDateLabel),
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: cs.onSurfaceVariant,
-                          ),
+                          style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
                         ),
                       ],
                     ),
-                    _StatusBadge(
-                      text: header.status.label.toUpperCase(),
-                      color: statusColor,
-                    ),
+                    _StatusBadge(text: header.status.label.toUpperCase(), color: statusColor),
                   ],
                 ),
                 const Padding(
@@ -487,10 +450,7 @@ class _OvertimeCard extends StatelessWidget {
                     Container(
                       width: 12,
                       height: 12,
-                      decoration: BoxDecoration(
-                        color: cs.primary,
-                        shape: BoxShape.circle,
-                      ),
+                      decoration: BoxDecoration(color: cs.primary, shape: BoxShape.circle),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
@@ -499,10 +459,7 @@ class _OvertimeCard extends StatelessWidget {
                         children: [
                           Text(
                             header.departmentName,
-                            style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                            ),
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -530,11 +487,7 @@ class _OvertimeCard extends StatelessWidget {
                               color: Colors.blue,
                             ),
                           ),
-                          Icon(
-                            Icons.chevron_right,
-                            size: 16,
-                            color: Colors.blue,
-                          ),
+                          Icon(Icons.chevron_right, size: 16, color: Colors.blue),
                         ],
                       ),
                   ],
@@ -664,13 +617,8 @@ class _EmptyState extends StatelessWidget {
             Icon(Icons.inbox_rounded, size: 64, color: cs.onSurfaceVariant),
             const SizedBox(height: 12),
             Text(
-              query.trim().isEmpty
-                  ? "No overtime requests found."
-                  : "No results for '$query'.",
-              style: TextStyle(
-                fontWeight: FontWeight.w900,
-                color: cs.onSurface,
-              ),
+              query.trim().isEmpty ? "No overtime requests found." : "No results for '$query'.",
+              style: TextStyle(fontWeight: FontWeight.w900, color: cs.onSurface),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 6),
@@ -706,10 +654,7 @@ class _ErrorState extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               "Failed to load data",
-              style: TextStyle(
-                fontWeight: FontWeight.w900,
-                color: cs.onSurface,
-              ),
+              style: TextStyle(fontWeight: FontWeight.w900, color: cs.onSurface),
             ),
             const SizedBox(height: 10),
             SelectableText(

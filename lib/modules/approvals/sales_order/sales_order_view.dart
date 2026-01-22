@@ -13,12 +13,10 @@ class SalesOrderApprovalView extends ConsumerStatefulWidget {
   const SalesOrderApprovalView({super.key});
 
   @override
-  ConsumerState<SalesOrderApprovalView> createState() =>
-      _SalesOrderApprovalViewState();
+  ConsumerState<SalesOrderApprovalView> createState() => _SalesOrderApprovalViewState();
 }
 
-class _SalesOrderApprovalViewState
-    extends ConsumerState<SalesOrderApprovalView> {
+class _SalesOrderApprovalViewState extends ConsumerState<SalesOrderApprovalView> {
   static const int _pageSize = 40;
 
   final TextEditingController _searchCtrl = TextEditingController();
@@ -147,9 +145,7 @@ class _SalesOrderApprovalViewState
       if (missingCodes.isNotEmpty) {
         final customers = await r.fetchCustomersByCodes(missingCodes.toList());
         customers.forEach((k, v) {
-          final name = v.customerName.trim().isEmpty
-              ? "Unknown Customer"
-              : v.customerName.trim();
+          final name = v.customerName.trim().isEmpty ? "Unknown Customer" : v.customerName.trim();
           _customerNameByCode[k] = name;
           _customerNameByCode[_normalizeCustomerCode(k)] = name;
         });
@@ -230,10 +226,7 @@ class _SalesOrderApprovalViewState
                           child: InkWell(
                             onTap: () => Navigator.pop(ctx, s),
                             child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 20,
-                                vertical: 14,
-                              ),
+                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
                               child: Row(
                                 children: [
                                   Container(
@@ -241,22 +234,14 @@ class _SalesOrderApprovalViewState
                                     height: 22,
                                     decoration: BoxDecoration(
                                       shape: BoxShape.circle,
-                                      color: isSelected
-                                          ? cs.primary
-                                          : Colors.transparent,
+                                      color: isSelected ? cs.primary : Colors.transparent,
                                       border: Border.all(
-                                        color: isSelected
-                                            ? cs.primary
-                                            : cs.outlineVariant,
+                                        color: isSelected ? cs.primary : cs.outlineVariant,
                                         width: 2,
                                       ),
                                     ),
                                     child: isSelected
-                                        ? Icon(
-                                            Icons.check,
-                                            size: 14,
-                                            color: cs.onPrimary,
-                                          )
+                                        ? Icon(Icons.check, size: 14, color: cs.onPrimary)
                                         : null,
                                   ),
                                   const SizedBox(width: 14),
@@ -264,20 +249,17 @@ class _SalesOrderApprovalViewState
                                     child: Text(
                                       s.label,
                                       style: theme.textTheme.bodyLarge?.copyWith(
-                                        fontWeight: isSelected
-                                            ? FontWeight.w700
-                                            : FontWeight.w600,
-                                        color: isSelected
-                                            ? cs.onSurface
-                                            : cs.onSurfaceVariant,
+                                        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+                                        color: isSelected ? cs.onSurface : cs.onSurfaceVariant,
                                       ),
                                     ),
                                   ),
                                 ],
                               ),
                             ),
-                          ));
-                        }),
+                          ),
+                        );
+                      }),
                     ],
                   ),
                 ),
@@ -297,9 +279,7 @@ class _SalesOrderApprovalViewState
   Future<void> _openGroupApproval(repo.SalesOrderCustomerGroup g) async {
     // Only actionable if at least one order is For Approval
     final actionable = g.orders
-        .where(
-          (o) => o.orderStatus == repo.SalesOrderRepository.soStatusForApproval,
-        )
+        .where((o) => o.orderStatus == repo.SalesOrderRepository.soStatusForApproval)
         .toList();
 
     if (actionable.isEmpty) return;
@@ -337,13 +317,9 @@ class _SalesOrderApprovalViewState
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            "Approved ${ordersToApprove.length} order(s) for $customerName.",
-          ),
+          content: Text("Approved ${ordersToApprove.length} order(s) for $customerName."),
           behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ),
       );
     }
@@ -352,9 +328,7 @@ class _SalesOrderApprovalViewState
   String _displayCustomerName(String customerCode) {
     final raw = customerCode.trim();
     if (raw.isEmpty) return "Unknown Customer";
-    return _customerNameByCode[raw] ??
-        _customerNameByCode[_normalizeCustomerCode(raw)] ??
-        raw;
+    return _customerNameByCode[raw] ?? _customerNameByCode[_normalizeCustomerCode(raw)] ?? raw;
   }
 
   Widget _buildSearchAndFilterHeader(ColorScheme cs, bool searching) {
@@ -373,11 +347,7 @@ class _SalesOrderApprovalViewState
               onChanged: _onSearchChanged,
               decoration: InputDecoration(
                 hintText: "Search customer code, SO #, PO # ...",
-                prefixIcon: Icon(
-                  Icons.search_rounded,
-                  color: cs.primary,
-                  size: 20,
-                ),
+                prefixIcon: Icon(Icons.search_rounded, color: cs.primary, size: 20),
                 suffixIcon: _searchCtrl.text.isNotEmpty
                     ? IconButton(
                         icon: const Icon(Icons.cancel, size: 18),
@@ -398,10 +368,7 @@ class _SalesOrderApprovalViewState
               GestureDetector(
                 onTap: _showFilterMenu,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
                     border: Border.all(color: cs.outlineVariant),
                     borderRadius: BorderRadius.circular(8),
@@ -412,10 +379,7 @@ class _SalesOrderApprovalViewState
                       const SizedBox(width: 8),
                       Text(
                         searching ? "Search Results" : _selectedStatus.label,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                        ),
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
                       ),
                       const Icon(Icons.arrow_drop_down),
                     ],
@@ -474,6 +438,7 @@ class _SalesOrderApprovalViewState
             ),
           ],
         ),
+        actions: [IconButton(icon: const Icon(Icons.refresh), onPressed: _reload)],
       ),
       body: Column(
         children: [
@@ -488,9 +453,7 @@ class _SalesOrderApprovalViewState
                     child: _groups.isEmpty
                         ? ListView(
                             padding: const EdgeInsets.fromLTRB(16, 40, 16, 16),
-                            children: [
-                              _EmptyState(searching: searching, query: _query),
-                            ],
+                            children: [_EmptyState(searching: searching, query: _query)],
                           )
                         : ListView.builder(
                             controller: _scrollCtrl,
@@ -499,31 +462,21 @@ class _SalesOrderApprovalViewState
                             itemBuilder: (context, i) {
                               if (i == _groups.length) {
                                 return Padding(
-                                  padding: const EdgeInsets.only(
-                                    top: 12,
-                                    bottom: 26,
-                                  ),
+                                  padding: const EdgeInsets.only(top: 12, bottom: 26),
                                   child: Center(
                                     child: _loadingMore
                                         ? const SizedBox(
                                             width: 24,
                                             height: 24,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2.2,
-                                            ),
+                                            child: CircularProgressIndicator(strokeWidth: 2.2),
                                           )
                                         : (!_hasMore
                                               ? Text(
                                                   "— end —",
-                                                  style: theme
-                                                      .textTheme
-                                                      .bodySmall
-                                                      ?.copyWith(
-                                                        color:
-                                                            cs.onSurfaceVariant,
-                                                        fontWeight:
-                                                            FontWeight.w600,
-                                                      ),
+                                                  style: theme.textTheme.bodySmall?.copyWith(
+                                                    color: cs.onSurfaceVariant,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
                                                 )
                                               : const SizedBox.shrink()),
                                   ),
@@ -531,17 +484,12 @@ class _SalesOrderApprovalViewState
                               }
 
                               final g = _groups[i];
-                              final title = _displayCustomerName(
-                                g.customerCode,
-                              );
+                              final title = _displayCustomerName(g.customerCode);
 
                               // Actionable if group contains at least one "For Approval"
                               final actionable = g.orders.any(
                                 (o) =>
-                                    o.orderStatus ==
-                                    repo
-                                        .SalesOrderRepository
-                                        .soStatusForApproval,
+                                    o.orderStatus == repo.SalesOrderRepository.soStatusForApproval,
                               );
 
                               return Padding(
@@ -575,11 +523,7 @@ class _SearchField extends StatelessWidget {
   final String hintText;
   final ValueChanged<String> onChanged;
 
-  const _SearchField({
-    required this.controller,
-    required this.hintText,
-    required this.onChanged,
-  });
+  const _SearchField({required this.controller, required this.hintText, required this.onChanged});
 
   @override
   Widget build(BuildContext context) {
@@ -601,18 +545,11 @@ class _SearchField extends StatelessWidget {
             textInputAction: TextInputAction.search,
             decoration: InputDecoration(
               hintText: hintText,
-              prefixIcon: Icon(
-                Icons.search_rounded,
-                color: cs.primary,
-                size: 20,
-              ),
+              prefixIcon: Icon(Icons.search_rounded, color: cs.primary, size: 20),
               suffixIcon: hasText
                   ? IconButton(
                       tooltip: "Clear",
-                      icon: Icon(
-                        Icons.close_rounded,
-                        color: cs.onSurfaceVariant,
-                      ),
+                      icon: Icon(Icons.close_rounded, color: cs.onSurfaceVariant),
                       onPressed: () {
                         controller.clear();
                         onChanged("");
@@ -620,10 +557,7 @@ class _SearchField extends StatelessWidget {
                     )
                   : null,
               border: InputBorder.none,
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 12,
-              ),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             ),
           );
         },
@@ -704,11 +638,7 @@ class _MetaCount extends StatelessWidget {
   final int value;
   final bool subtle;
 
-  const _MetaCount({
-    required this.label,
-    required this.value,
-    required this.subtle,
-  });
+  const _MetaCount({required this.label, required this.value, required this.subtle});
 
   @override
   Widget build(BuildContext context) {
@@ -818,9 +748,7 @@ class _CustomerGroupCard extends StatelessWidget {
                             ),
                             const SizedBox(width: 10),
                             _Pill(
-                              text: status.trim().isEmpty
-                                  ? "—"
-                                  : status.toUpperCase(),
+                              text: status.trim().isEmpty ? "—" : status.toUpperCase(),
                               bg: statusColor.withOpacity(0.12),
                               fg: statusColor,
                             ),
@@ -847,9 +775,7 @@ class _CustomerGroupCard extends StatelessWidget {
                               ),
                             ),
                             Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                              ),
+                              padding: const EdgeInsets.symmetric(horizontal: 8),
                               child: Container(
                                 width: 4,
                                 height: 4,
@@ -876,11 +802,7 @@ class _CustomerGroupCard extends StatelessWidget {
                           const SizedBox(height: 10),
                           Row(
                             children: [
-                              Icon(
-                                Icons.verified_rounded,
-                                size: 16,
-                                color: cs.primary,
-                              ),
+                              Icon(Icons.verified_rounded, size: 16, color: cs.primary),
                               const SizedBox(width: 6),
                               Text(
                                 "Ready for approval",
@@ -963,9 +885,7 @@ class _EmptyState extends StatelessWidget {
             ),
             const SizedBox(height: 14),
             Text(
-              searching
-                  ? "No results for \"${query.trim()}\""
-                  : "No sales orders found",
+              searching ? "No results for \"${query.trim()}\"" : "No sales orders found",
               style: theme.textTheme.titleMedium?.copyWith(
                 fontWeight: FontWeight.w900,
                 color: cs.onSurface,
@@ -1072,12 +992,7 @@ class _Pill extends StatelessWidget {
       ),
       child: Text(
         text,
-        style: TextStyle(
-          fontSize: 10,
-          fontWeight: FontWeight.w900,
-          color: fg,
-          letterSpacing: 0.3,
-        ),
+        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: fg, letterSpacing: 0.3),
       ),
     );
   }
