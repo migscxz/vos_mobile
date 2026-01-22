@@ -632,6 +632,13 @@ class _DisbursementCard extends StatelessWidget {
                             fontWeight: FontWeight.w700,
                           ),
                         ),
+                        Text(
+                          "Balance: ${money(header.totalAmount - header.paidAmount)}",
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: cs.onSurfaceVariant,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
                       ],
                     ),
                   ],

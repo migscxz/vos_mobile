@@ -12,12 +12,10 @@ class DisbursementApprovalSheet extends ConsumerStatefulWidget {
   final DisbursementHeader header;
 
   @override
-  ConsumerState<DisbursementApprovalSheet> createState() =>
-      _DisbursementApprovalSheetState();
+  ConsumerState<DisbursementApprovalSheet> createState() => _DisbursementApprovalSheetState();
 }
 
-class _DisbursementApprovalSheetState
-    extends ConsumerState<DisbursementApprovalSheet> {
+class _DisbursementApprovalSheetState extends ConsumerState<DisbursementApprovalSheet> {
   bool _loading = true;
   bool _approving = false;
   String? _error;
@@ -53,8 +51,7 @@ class _DisbursementApprovalSheetState
       for (final c in coaRows) {
         final id = _asInt(c["coa_id"]);
         if (id == null) continue;
-        coaTitleById[id] = (c["account_title"]?.toString() ?? "Unknown COA")
-            .trim();
+        coaTitleById[id] = (c["account_title"]?.toString() ?? "Unknown COA").trim();
       }
 
       final items = <DisbursementPayableRow>[];
@@ -67,9 +64,7 @@ class _DisbursementApprovalSheetState
             DateTime.fromMillisecondsSinceEpoch(0);
 
         final coaId = _asInt(r["coa_id"]) ?? 0;
-        final coaTitle = coaId > 0
-            ? (coaTitleById[coaId] ?? "Unknown COA")
-            : "Unknown COA";
+        final coaTitle = coaId > 0 ? (coaTitleById[coaId] ?? "Unknown COA") : "Unknown COA";
 
         final amount = _asDouble(r["amount"]) ?? 0;
         final remarks = (r["remarks"]?.toString() ?? "").trim();
@@ -121,27 +116,17 @@ class _DisbursementApprovalSheetState
       final api = ref.read(apiClientProvider);
       final repo = DisbursementRepository(api);
 
-      final approverId = await ref
-          .read(authRepositoryProvider)
-          .getCurrentAppUserId();
+      final approverId = await ref.read(authRepositoryProvider).getCurrentAppUserId();
       if (approverId == null) {
-        throw Exception(
-          "No user session found (user_id missing). Please login again.",
-        );
+        throw Exception("No user session found (user_id missing). Please login again.");
       }
 
-      await repo.approveDisbursement(
-        disbursementId: widget.header.id,
-        approverId: approverId,
-      );
+      await repo.approveDisbursement(disbursementId: widget.header.id, approverId: approverId);
 
       if (!mounted) return;
 
       Navigator.of(context).pop(
-        DisbursementApproveOutcome(
-          disbursementId: widget.header.id,
-          docNo: widget.header.docNo,
-        ),
+        DisbursementApproveOutcome(disbursementId: widget.header.id, docNo: widget.header.docNo),
       );
     } catch (e) {
       if (!mounted) return;
@@ -299,9 +284,11 @@ class _DisbursementApprovalSheetState
                             ),
                             const SizedBox(height: 10),
                             _MiniKV(
-                              label: "Encoder",
-                              value: header.encoderName,
+                              label: "Balance",
+                              value: money(header.totalAmount - header.paidAmount),
                             ),
+                            const SizedBox(height: 10),
+                            _MiniKV(label: "Encoder", value: header.encoderName),
                             const SizedBox(height: 10),
                             _MiniKV(
                               label: "Status",
@@ -337,9 +324,7 @@ class _DisbursementApprovalSheetState
                         _Card(
                           child: Text(
                             "No payable lines found.",
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              color: cs.onSurfaceVariant,
-                            ),
+                            style: theme.textTheme.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
                           ),
                         )
                       else
@@ -375,11 +360,10 @@ class _DisbursementApprovalSheetState
                                     const SizedBox(height: 8),
                                     Text(
                                       "Reference No",
-                                      style: theme.textTheme.labelLarge
-                                          ?.copyWith(
-                                            fontWeight: FontWeight.w900,
-                                            color: cs.onSurfaceVariant,
-                                          ),
+                                      style: theme.textTheme.labelLarge?.copyWith(
+                                        fontWeight: FontWeight.w900,
+                                        color: cs.onSurfaceVariant,
+                                      ),
                                     ),
                                     const SizedBox(height: 4),
                                     Text(p.referenceNo),
@@ -388,11 +372,10 @@ class _DisbursementApprovalSheetState
                                     const SizedBox(height: 8),
                                     Text(
                                       "Remarks",
-                                      style: theme.textTheme.labelLarge
-                                          ?.copyWith(
-                                            fontWeight: FontWeight.w900,
-                                            color: cs.onSurfaceVariant,
-                                          ),
+                                      style: theme.textTheme.labelLarge?.copyWith(
+                                        fontWeight: FontWeight.w900,
+                                        color: cs.onSurfaceVariant,
+                                      ),
                                     ),
                                     const SizedBox(height: 4),
                                     Text(p.remarks),
@@ -413,14 +396,10 @@ class _DisbursementApprovalSheetState
                     children: [
                       Expanded(
                         child: OutlinedButton(
-                          onPressed: _approving
-                              ? null
-                              : () => Navigator.of(context).pop(),
+                          onPressed: _approving ? null : () => Navigator.of(context).pop(),
                           style: OutlinedButton.styleFrom(
                             minimumSize: const Size.fromHeight(48),
-                            side: BorderSide(
-                              color: cs.outlineVariant.withOpacity(0.6),
-                            ),
+                            side: BorderSide(color: cs.outlineVariant.withOpacity(0.6)),
                           ),
                           child: const Text(
                             "Cancel",
@@ -431,19 +410,13 @@ class _DisbursementApprovalSheetState
                       const SizedBox(width: 12),
                       Expanded(
                         child: FilledButton(
-                          onPressed: (widget.header.isApproved || _approving)
-                              ? null
-                              : _approve,
-                          style: FilledButton.styleFrom(
-                            minimumSize: const Size.fromHeight(48),
-                          ),
+                          onPressed: (widget.header.isApproved || _approving) ? null : _approve,
+                          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
                           child: _approving
                               ? const SizedBox(
                                   width: 20,
                                   height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
+                                  child: CircularProgressIndicator(strokeWidth: 2),
                                 )
                               : const Text(
                                   "Approve",
@@ -512,16 +485,10 @@ class _ErrorBanner extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: cs.errorContainer,
-        borderRadius: BorderRadius.circular(12),
-      ),
+      decoration: BoxDecoration(color: cs.errorContainer, borderRadius: BorderRadius.circular(12)),
       child: Text(
         message,
-        style: TextStyle(
-          color: cs.onErrorContainer,
-          fontWeight: FontWeight.w800,
-        ),
+        style: TextStyle(color: cs.onErrorContainer, fontWeight: FontWeight.w800),
       ),
     );
   }
@@ -556,11 +523,7 @@ class _SectionHeader extends StatelessWidget {
   final String subtitle;
   final Widget? trailing;
 
-  const _SectionHeader({
-    required this.title,
-    required this.subtitle,
-    this.trailing,
-  });
+  const _SectionHeader({required this.title, required this.subtitle, this.trailing});
 
   @override
   Widget build(BuildContext context) {
@@ -641,7 +604,6 @@ class _MiniKV extends StatelessWidget {
     );
   }
 }
-
 
 Widget _kv(String k, String v) {
   return Row(
