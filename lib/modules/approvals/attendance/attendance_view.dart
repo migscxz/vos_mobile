@@ -171,6 +171,9 @@ class _AttendanceApprovalViewState extends ConsumerState<AttendanceApprovalView>
         );
       }).toList();
 
+      // Sort groups alphabetically by employee name
+      groups.sort((a, b) => a.employeeName.compareTo(b.employeeName));
+
       setState(() {
         _groups.addAll(groups);
         _offset += page.items.length;

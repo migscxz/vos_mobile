@@ -276,18 +276,23 @@ class _AttendanceApprovalSheetState extends ConsumerState<AttendanceApprovalShee
                             : null,
                       ),
                       const SizedBox(height: 10),
-                      ...widget.group.pendingApprovals.map(
-                        (approval) => Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: _PendingApprovalCard(
-                            approval: approval,
-                            isSelected: _selectedLogIds.contains(approval.approvalId),
-                            onToggle: canApproveThisDepartment
-                                ? () => _toggleSelection(approval.approvalId)
-                                : null,
+                      ...(() {
+                        final sortedApprovals = List<AttendanceApprovalHeader>.from(
+                          widget.group.pendingApprovals,
+                        )..sort((a, b) => a.dateScheduleLabel.compareTo(b.dateScheduleLabel));
+                        return sortedApprovals.map(
+                          (approval) => Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: _PendingApprovalCard(
+                              approval: approval,
+                              isSelected: _selectedLogIds.contains(approval.approvalId),
+                              onToggle: canApproveThisDepartment
+                                  ? () => _toggleSelection(approval.approvalId)
+                                  : null,
+                            ),
                           ),
-                        ),
-                      ),
+                        );
+                      })(),
                     ],
                   ),
                 ),
