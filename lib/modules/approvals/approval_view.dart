@@ -7,9 +7,11 @@ import "../../core/auth/user_permissions.dart";
 import "../../data/repositories/attendance_repository.dart";
 import "../../data/repositories/disbursement_repository.dart";
 import "../../data/repositories/dispatch_plan_repository.dart" as dp_repo;
+import "../../data/repositories/leave_repository.dart";
 import "../../data/repositories/overtime_repository.dart";
 import "../../data/repositories/sales_order_repository.dart";
 import "../../data/repositories/stock_transfer_repository.dart";
+// import '../../data/repositories/leave_repository.dart';
 import "attendance/attendance_view.dart";
 import "disbursement/disbursement_models.dart";
 import "disbursement/disbursement_view.dart";
@@ -18,6 +20,8 @@ import "dispatch_plan/dispatch_plan_view.dart";
 import "overtime/overtime_view.dart";
 import "sales_order/sales_order_view.dart";
 import "stock_transfer/stock_transfer_view.dart";
+import 'leave/leave_view.dart';
+
 
 class ApprovalView extends ConsumerStatefulWidget {
   const ApprovalView({super.key});
@@ -56,6 +60,11 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
   bool _atLoading = true;
   String? _atError;
   int _atPendingCount = 0;
+
+  // Leave badge
+  bool _lvLoading = true;
+  String? _lvError;
+  int _lvPendingCount = 0;
 
   @override
   void initState() {
@@ -106,6 +115,9 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
 
       _atLoading = true;
       _atError = null;
+
+      _lvLoading = true;
+      _lvError = null;
     });
 
     final api = ref.read(apiClientProvider);
@@ -113,6 +125,7 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
     final stRepo = StockTransferRepository(api);
     final soRepo = SalesOrderRepository(api);
     final otRepo = OvertimeRepository(api);
+    final lvRepo = LeaveRepository(api);
     final dbRepo = DisbursementRepository(api);
     final dpRepo = dp_repo.DispatchPlanRepository(api);
     final atRepo = AttendanceRepository(api);
@@ -121,6 +134,7 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
     final stFuture = stRepo.fetchRequestedHeaderCount();
     final soFuture = soRepo.fetchSalesOrderCount(status: SalesOrderRepository.soStatusForApproval);
     final otFuture = otRepo.fetchOvertimePendingCount();
+    final lvFuture = lvRepo.fetchLeavePendingCount();
 
     // Pending disbursements: approver_id IS NULL AND date_approved IS NULL
     final dbFuture = dbRepo.fetchDisbursementCount(filter: DisbursementFilter.pending);
@@ -162,6 +176,7 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
       stFuture.then<Object?>((v) => v).catchError((e) => e),
       soFuture.then<Object?>((v) => v).catchError((e) => e),
       otFuture.then<Object?>((v) => v).catchError((e) => e),
+      lvFuture.then<Object?>((v) => v).catchError((e) => e),
       dbFuture.then<Object?>((v) => v).catchError((e) => e),
       dpFuture.then<Object?>((v) => v).catchError((e) => e),
       atFuture.then<Object?>((v) => v).catchError((e) => e),
@@ -205,8 +220,20 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
       _otError = otRes.toString();
     }
 
+    // Leave result
+    final lvRes = results[3];
+    if (lvRes is int) {
+      _lvPendingCount = lvRes;
+      _lvLoading = false;
+      _lvError = null;
+    } else {
+      _lvPendingCount = 0;
+      _lvLoading = false;
+      _lvError = lvRes.toString();
+    }
+
     // Disbursement result
-    final dbRes = results[3];
+    final dbRes = results[4];
     if (dbRes is int) {
       _dbPendingCount = dbRes;
       _dbLoading = false;
@@ -218,7 +245,7 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
     }
 
     // Dispatch Plan result
-    final dpRes = results[4];
+    final dpRes = results[5];
     if (dpRes is dp_repo.PagedResult) {
       _dpPendingCount = dpRes.total;
       _dpLoading = false;
@@ -230,7 +257,7 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
     }
 
     // Attendance result
-    final atRes = results[5];
+    final atRes = results[6];
     if (atRes is int) {
       _atPendingCount = atRes;
       _atLoading = false;
@@ -248,6 +275,7 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
       _requestedCount +
       _soForApprovalCount +
       _otPendingCount +
+      _lvPendingCount +
       _dbPendingCount +
       _dpPendingCount +
       _atPendingCount;
@@ -256,6 +284,7 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
       _stError != null ||
       _soError != null ||
       _otError != null ||
+      _lvError != null ||
       _dbError != null ||
       _dpError != null ||
       _atError != null;
@@ -370,7 +399,10 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                         if (_soError != null && (_otError != null || _dbError != null))
                           const SizedBox(height: 8),
                         if (_otError != null) _InlineError(message: "Overtime: $_otError"),
-                        if (_otError != null && _dbError != null) const SizedBox(height: 8),
+                        if (_otError != null && (_lvError != null || _dbError != null))
+                          const SizedBox(height: 8),
+                        if (_lvError != null) _InlineError(message: "Leave: $_lvError"),
+                        if (_lvError != null && _dbError != null) const SizedBox(height: 8),
                         if (_dbError != null) _InlineError(message: "Disbursement: $_dbError"),
                         if (_dbError != null && _dpError != null) const SizedBox(height: 8),
                         if (_dpError != null) _InlineError(message: "Dispatch Plan: $_dpError"),
@@ -428,6 +460,21 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                         Navigator.of(
                           context,
                         ).push(MaterialPageRoute(builder: (_) => const OvertimeApprovalView()));
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    _ApprovalCard(
+                      title: "Leave",
+                      subtitle: "Review pending leave requests",
+                      icon: Icons.beach_access_rounded,
+                      iconColor: const Color(0xFF7C3AED),
+                      iconBackground: const Color(0xFFF3E8FF),
+                      loading: _lvLoading,
+                      badgeCount: _lvPendingCount,
+                      onTap: () {
+                        Navigator.of(
+                          context,
+                        ).push(MaterialPageRoute(builder: (_) => const LeaveApprovalView()));
                       },
                     ),
                     const SizedBox(height: 12),
