@@ -2127,7 +2127,6 @@ ORDER BY fb.brand_name, fb.category_name, fb.product_name
     FROM assets_and_equipment a;
   ''');
   }
-}
 
   /* -------------------------------------------------------------------------- */
   /*                    Inventory cache tables + SQLite views                    */

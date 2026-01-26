@@ -205,16 +205,6 @@ class _APViewState extends ConsumerState<APView> {
               for (final v in ap.vendors)
                 _apCard(
                   context,
-                  vendorName: (v as dynamic).vendor ?? '',
-                  total: ((v as dynamic).total ?? 0.0).toDouble(),
-                  dueStr: (v as dynamic).due as String?,
-                  status: (v as dynamic).status ?? 'Current',
-                  remarks: (v as dynamic).remarks ?? '',
-                  onTap: () => _openVendorDetail(
-                    context,
-                    ((v as dynamic).payeeId ?? 0) as int,
-                    (v as dynamic).vendor ?? '',
-                  ),
                   vendorName: v.vendor,
                   total: v.total,
                   dueStr: v.due,
