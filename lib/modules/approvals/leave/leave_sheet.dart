@@ -4,6 +4,7 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 
 import "../../../app.dart"; // apiClientProvider, authRepositoryProvider
 import "../../../data/repositories/leave_repository.dart";
+import "../approval_sheet_widgets.dart";
 import "leave_models.dart";
 
 class LeaveApprovalSheet extends ConsumerStatefulWidget {
@@ -155,10 +156,11 @@ class _LeaveApprovalSheetState extends ConsumerState<LeaveApprovalSheet> {
             ),
             child: Column(
               children: [
+                // Drag handle
                 Padding(
-                  padding: const EdgeInsets.only(top: 10, bottom: 6),
+                  padding: const EdgeInsets.only(top: 10, bottom: 8),
                   child: Container(
-                    width: 44,
+                    width: 48,
                     height: 4,
                     decoration: BoxDecoration(
                       color: cs.onSurfaceVariant.withOpacity(0.35),
@@ -166,19 +168,37 @@ class _LeaveApprovalSheetState extends ConsumerState<LeaveApprovalSheet> {
                     ),
                   ),
                 ),
+                // Header
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+                  padding: const EdgeInsets.fromLTRB(18, 2, 10, 12),
                   child: Row(
                     children: [
                       Expanded(
-                        child: Text(
-                          "Leave Action",
-                          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "Leave Action",
+                              style: theme.textTheme.titleLarge?.copyWith(
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: -0.2,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              "Review and approve leave request",
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: cs.onSurfaceVariant,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                       IconButton(
                         onPressed: () => Navigator.of(context).pop(null),
                         icon: const Icon(Icons.close_rounded),
+                        tooltip: "Close",
                       ),
                     ],
                   ),
@@ -189,10 +209,10 @@ class _LeaveApprovalSheetState extends ConsumerState<LeaveApprovalSheet> {
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                     children: [
                       if (_error != null) ...[
-                        _ErrorBanner(message: _error!),
+                        ApprovalErrorBanner(message: _error!),
                         const SizedBox(height: 12),
                       ],
-                      _Card(
+                      ApprovalCard(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [

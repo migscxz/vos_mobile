@@ -4,6 +4,7 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 
 import "../../../app.dart"; // apiClientProvider, authRepositoryProvider
 import "../../../data/repositories/overtime_repository.dart";
+import "../approval_sheet_widgets.dart";
 import "overtime_models.dart";
 
 class OvertimeApprovalSheet extends ConsumerStatefulWidget {
@@ -12,20 +13,15 @@ class OvertimeApprovalSheet extends ConsumerStatefulWidget {
   final OvertimeApprovalHeader header;
 
   @override
-  ConsumerState<OvertimeApprovalSheet> createState() =>
-      _OvertimeApprovalSheetState();
+  ConsumerState<OvertimeApprovalSheet> createState() => _OvertimeApprovalSheetState();
 }
 
 class _OvertimeApprovalSheetState extends ConsumerState<OvertimeApprovalSheet> {
   bool _processing = false;
   String? _error;
 
-  Future<_ApproverInfo> _loadApproverInfo(
-    OvertimeRepository overtimeRepo,
-  ) async {
-    final approverIdRaw = await ref
-        .read(authRepositoryProvider)
-        .getCurrentAppUserId();
+  Future<_ApproverInfo> _loadApproverInfo(OvertimeRepository overtimeRepo) async {
+    final approverIdRaw = await ref.read(authRepositoryProvider).getCurrentAppUserId();
 
     if (approverIdRaw == null) {
       throw Exception("Invalid approverId from authRepositoryProvider: null");
@@ -36,16 +32,12 @@ class _OvertimeApprovalSheetState extends ConsumerState<OvertimeApprovalSheet> {
         : int.tryParse(approverIdRaw.toString()) ?? 0;
 
     if (approverId <= 0) {
-      throw Exception(
-        "Invalid approverId from authRepositoryProvider: $approverIdRaw",
-      );
+      throw Exception("Invalid approverId from authRepositoryProvider: $approverIdRaw");
     }
 
-    final Map<int, AppUserLite> approverMap = await overtimeRepo
-        .fetchUsersByIds(<int>[approverId]);
+    final Map<int, AppUserLite> approverMap = await overtimeRepo.fetchUsersByIds(<int>[approverId]);
 
-    final String approverName =
-        approverMap[approverId]?.displayName ?? "Unknown Approver";
+    final String approverName = approverMap[approverId]?.displayName ?? "Unknown Approver";
 
     return _ApproverInfo(id: approverId, name: approverName);
   }
@@ -97,14 +89,8 @@ class _OvertimeApprovalSheetState extends ConsumerState<OvertimeApprovalSheet> {
         title: const Text("Reject Overtime?"),
         content: const Text("This will mark the request as rejected."),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text("Cancel"),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text("Reject"),
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Reject")),
         ],
       ),
     );
@@ -176,10 +162,11 @@ class _OvertimeApprovalSheetState extends ConsumerState<OvertimeApprovalSheet> {
             ),
             child: Column(
               children: [
+                // Drag handle
                 Padding(
-                  padding: const EdgeInsets.only(top: 10, bottom: 6),
+                  padding: const EdgeInsets.only(top: 10, bottom: 8),
                   child: Container(
-                    width: 44,
+                    width: 48,
                     height: 4,
                     decoration: BoxDecoration(
                       color: cs.onSurfaceVariant.withOpacity(0.35),
@@ -187,21 +174,37 @@ class _OvertimeApprovalSheetState extends ConsumerState<OvertimeApprovalSheet> {
                     ),
                   ),
                 ),
+                // Header
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+                  padding: const EdgeInsets.fromLTRB(18, 2, 10, 12),
                   child: Row(
                     children: [
                       Expanded(
-                        child: Text(
-                          "Overtime Action",
-                          style: theme.textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w900,
-                          ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "Overtime Action",
+                              style: theme.textTheme.titleLarge?.copyWith(
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: -0.2,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              "Review and approve overtime request",
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: cs.onSurfaceVariant,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                       IconButton(
                         onPressed: () => Navigator.of(context).pop(null),
                         icon: const Icon(Icons.close_rounded),
+                        tooltip: "Close",
                       ),
                     ],
                   ),
@@ -212,10 +215,10 @@ class _OvertimeApprovalSheetState extends ConsumerState<OvertimeApprovalSheet> {
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                     children: [
                       if (_error != null) ...[
-                        _ErrorBanner(message: _error!),
+                        ApprovalErrorBanner(message: _error!),
                         const SizedBox(height: 12),
                       ],
-                      _Card(
+                      ApprovalCard(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -239,16 +242,10 @@ class _OvertimeApprovalSheetState extends ConsumerState<OvertimeApprovalSheet> {
                             Row(
                               children: [
                                 Expanded(
-                                  child: _MiniKV(
-                                    label: "Request Date",
-                                    value: h.requestDateLabel,
-                                  ),
+                                  child: _MiniKV(label: "Request Date", value: h.requestDateLabel),
                                 ),
                                 Expanded(
-                                  child: _MiniKV(
-                                    label: "Filed At",
-                                    value: h.filedAtLabel,
-                                  ),
+                                  child: _MiniKV(label: "Filed At", value: h.filedAtLabel),
                                 ),
                               ],
                             ),
@@ -256,16 +253,10 @@ class _OvertimeApprovalSheetState extends ConsumerState<OvertimeApprovalSheet> {
                             Row(
                               children: [
                                 Expanded(
-                                  child: _MiniKV(
-                                    label: "OT Time",
-                                    value: h.timeRangeLabel,
-                                  ),
+                                  child: _MiniKV(label: "OT Time", value: h.timeRangeLabel),
                                 ),
                                 Expanded(
-                                  child: _MiniKV(
-                                    label: "Duration",
-                                    value: h.durationLabel,
-                                  ),
+                                  child: _MiniKV(label: "Duration", value: h.durationLabel),
                                 ),
                               ],
                             ),
@@ -284,57 +275,10 @@ class _OvertimeApprovalSheetState extends ConsumerState<OvertimeApprovalSheet> {
                 ),
 
                 // ACTION BUTTONS
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: _processing ? null : _reject,
-                          style: OutlinedButton.styleFrom(
-                            minimumSize: const Size.fromHeight(48),
-                            side: BorderSide(color: cs.error.withOpacity(0.6)),
-                          ),
-                          child: _processing
-                              ? const SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : Text(
-                                  "Reject",
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w900,
-                                    color: cs.error,
-                                  ),
-                                ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: FilledButton(
-                          onPressed: _processing ? null : _approve,
-                          style: FilledButton.styleFrom(
-                            minimumSize: const Size.fromHeight(48),
-                          ),
-                          child: _processing
-                              ? const SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Text(
-                                  "Approve",
-                                  style: TextStyle(fontWeight: FontWeight.w900),
-                                ),
-                        ),
-                      ),
-                    ],
-                  ),
+                ApprovalActionButtons(
+                  onReject: _reject,
+                  onApprove: _approve,
+                  isProcessing: _processing,
                 ),
               ],
             ),
@@ -361,7 +305,6 @@ class _Card extends StatelessWidget {
   final Widget child;
   final EdgeInsets padding = EdgeInsets.zero;
 
-
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -374,11 +317,7 @@ class _Card extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: cs.outlineVariant.withOpacity(0.42)),
         boxShadow: [
-          BoxShadow(
-            color: cs.shadow.withOpacity(0.04),
-            blurRadius: 12,
-            offset: const Offset(0, 6),
-          ),
+          BoxShadow(color: cs.shadow.withOpacity(0.04), blurRadius: 12, offset: const Offset(0, 6)),
         ],
       ),
       child: child,
@@ -396,16 +335,10 @@ class _ErrorBanner extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: cs.errorContainer,
-        borderRadius: BorderRadius.circular(12),
-      ),
+      decoration: BoxDecoration(color: cs.errorContainer, borderRadius: BorderRadius.circular(12)),
       child: Text(
         message,
-        style: TextStyle(
-          color: cs.onErrorContainer,
-          fontWeight: FontWeight.w800,
-        ),
+        style: TextStyle(color: cs.onErrorContainer, fontWeight: FontWeight.w800),
       ),
     );
   }
