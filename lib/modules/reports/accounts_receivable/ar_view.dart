@@ -1,4 +1,3 @@
-// lib/ui/ar/ar_view.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -542,7 +541,7 @@ class _ARViewState extends ConsumerState<ARView> {
     // Start from the search-filtered list
     List<ClientAR> result = clients;
 
-    // Apply aging filter
+    // Apply aging filter (use cents to avoid "₱0.00 but > 0" issues)
     if (_selectedAging != 'All') {
       String bucketKey;
       switch (_selectedAging) {
@@ -565,7 +564,7 @@ class _ARViewState extends ConsumerState<ARView> {
           bucketKey = 'current';
       }
       result = result
-          .where((c) => (c.aging[bucketKey] ?? 0) > 0)
+          .where((c) => (c.agingCents[bucketKey] ?? 0) > 0)
           .toList();
     }
 
@@ -577,8 +576,7 @@ class _ARViewState extends ConsumerState<ARView> {
       return c.invoices.any((inv) {
         final name = inv.salesmanName.trim();
         final code = inv.salesmanCode.trim();
-        final label =
-        name.isNotEmpty ? name : (code.isNotEmpty ? code : '');
+        final label = name.isNotEmpty ? name : (code.isNotEmpty ? code : '');
         return label == target;
       });
     }).toList();
@@ -593,8 +591,7 @@ class _ARViewState extends ConsumerState<ARView> {
     required Color color,
   }) {
     final percentage = total > 0 ? (amount / total * 100) : 0.0;
-    final fraction =
-    total > 0 ? (amount / total).clamp(0.0, 1.0) : 0.0;
+    final fraction = total > 0 ? (amount / total).clamp(0.0, 1.0) : 0.0;
 
     return Column(
       children: [
@@ -1077,9 +1074,9 @@ class _ClientDetail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Outstanding per-invoice = invoice.balance (already net - paid)
+    // Outstanding per-invoice = invoice.balance (cent-based filter)
     final invoices = client.invoices
-        .where((i) => i.balance > 0)
+        .where((i) => i.balanceCents > 0)
         .toList()
       ..sort(
             (a, b) => (a.dueDate ?? DateTime(2100))
@@ -1200,8 +1197,8 @@ class _ClientDetail extends StatelessWidget {
                 _divider(),
                 _agingRow('31-60 days', client.aging['31-60'], Colors.orange),
                 _divider(),
-                _agingRow(
-                    '61-90 days', client.aging['61-90'], Colors.deepOrange),
+                _agingRow('61-90 days', client.aging['61-90'],
+                    Colors.deepOrange),
                 _divider(),
                 _agingRow('90+ days', client.aging['90+'], Colors.red),
               ],

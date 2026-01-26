@@ -42,6 +42,7 @@ class _APViewState extends ConsumerState<APView> {
     final isTablet = width >= 900;
     final edge = EdgeInsets.all(isTablet ? 24 : 20);
     final topGap = isTablet ? 28.0 : 24.0;
+
     final headerTitleStyle = TextStyle(
       fontSize: isTablet ? 30 : 26,
       fontWeight: FontWeight.w700,
@@ -51,6 +52,7 @@ class _APViewState extends ConsumerState<APView> {
       fontSize: isTablet ? 15 : 14,
       color: Colors.grey.shade600,
     );
+
     final fmtDate = DateFormat('MMM d, yyyy h:mm a').format(ap.lastUpdated);
 
     return RefreshIndicator(
@@ -201,44 +203,29 @@ class _APViewState extends ConsumerState<APView> {
             // ✅ Proper branching: list on mobile, grid on tablet
             if (!isTablet) ...[
               for (final v in ap.vendors)
-                if (v != null)
-                  _apCard(
-                    context,
-                    vendorName: (v as dynamic).vendor ?? '',
-                    total: ((v as dynamic).total ?? 0.0).toDouble(),
-                    dueStr: (v as dynamic).due as String?,
-                    status: (v as dynamic).status ?? 'Current',
-                    remarks: (v as dynamic).remarks ?? '',
-                    onTap: () => _openVendorDetail(
-                      context,
-                      ((v as dynamic).payeeId ?? 0) as int,
-                      (v as dynamic).vendor ?? '',
-                    ),
-                    currencyFmt: currencyFmt,
-                    isTablet: isTablet,
-                  ),
+                _apCard(
+                  context,
+                  vendorName: v.vendor,
+                  total: v.total,
+                  dueStr: v.due,
+                  status: v.status.isEmpty ? 'Not Due' : v.status,
+                  remarks: v.remarks,
+                  onTap: () => _openVendorDetail(context, v.payeeId, v.vendor),
+                  currencyFmt: currencyFmt,
+                  isTablet: isTablet,
+                ),
             ] else ...[
               _VendorGrid(
                 vendors: ap.vendors,
-                buildCard: (dynamic v) {
-                  if (v == null) return const SizedBox.shrink();
-                  final vendorName = (v as dynamic).vendor ?? '';
-                  final total = ((v as dynamic).total ?? 0.0).toDouble();
-                  final dueStr = (v as dynamic).due as String?;
-                  final status = (v as dynamic).status ?? 'Current';
-                  final remarks = (v as dynamic).remarks ?? '';
+                buildCard: (APVendorCard v) {
                   return _GridApCard(
-                    vendorName: vendorName,
-                    total: total,
-                    dueStr: dueStr,
-                    status: status,
-                    remarks: remarks,
+                    vendorName: v.vendor,
+                    total: v.total,
+                    dueStr: v.due,
+                    status: v.status.isEmpty ? 'Not Due' : v.status,
+                    remarks: v.remarks,
                     currencyFmt: currencyFmt,
-                    onTap: () => _openVendorDetail(
-                      context,
-                      ((v as dynamic).payeeId ?? 0) as int,
-                      vendorName,
-                    ),
+                    onTap: () => _openVendorDetail(context, v.payeeId, v.vendor),
                   );
                 },
               ),
@@ -380,8 +367,9 @@ class _APViewState extends ConsumerState<APView> {
       }
     }
 
-    // Remark bullets
-    final remarkBullets = (remarks.isEmpty ? <String>[] : remarks
+    final remarkBullets = (remarks.isEmpty
+        ? <String>[]
+        : remarks
         .split(' | ')
         .map((s) => s.trim())
         .where((s) => s.isNotEmpty)
@@ -591,7 +579,7 @@ class _APViewState extends ConsumerState<APView> {
       ),
       builder: (_) => Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 720), // tablet-friendly sheet width
+          constraints: const BoxConstraints(maxWidth: 720),
           child: _VendorDetail(payeeId: payeeId, name: vendorName),
         ),
       ),
@@ -677,8 +665,8 @@ class _APViewState extends ConsumerState<APView> {
 }
 
 class _VendorGrid extends StatelessWidget {
-  final List vendors;
-  final Widget Function(dynamic v) buildCard;
+  final List<APVendorCard> vendors;
+  final Widget Function(APVendorCard v) buildCard;
 
   const _VendorGrid({
     required this.vendors,
@@ -689,28 +677,21 @@ class _VendorGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (ctx, c) {
-        // Use the actual available width within the ListView
         final w = c.maxWidth;
-        // Aim ~380–420 px per card
         final ideal = (w / 400).floor();
         final crossAxisCount = ideal.clamp(2, 4);
 
         return GridView.builder(
           shrinkWrap: true,
-          primary: false, // important inside ListView
+          primary: false,
           itemCount: vendors.length,
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: crossAxisCount,
-            // Fixed height avoids overflow/overlap on tablets
             mainAxisExtent: 160,
             crossAxisSpacing: 16,
             mainAxisSpacing: 16,
           ),
-          itemBuilder: (ctx, i) {
-            final v = vendors[i];
-            if (v == null) return const SizedBox.shrink();
-            return buildCard(v);
-          },
+          itemBuilder: (ctx, i) => buildCard(vendors[i]),
         );
       },
     );
@@ -747,7 +728,6 @@ class _GridApCard extends StatelessWidget {
       _ => Colors.green,
     };
 
-    // Days text (shortened)
     String daysInfo = '';
     if (dueDate != null) {
       final now = DateTime.now();
@@ -763,12 +743,9 @@ class _GridApCard extends StatelessWidget {
       }
     }
 
-    final remarkBullets = (remarks.isEmpty ? <String>[] : remarks
-        .split(' | ')
-        .map((s) => s.trim())
-        .where((s) => s.isNotEmpty)
-        .take(2)
-        .toList());
+    final remarkBullets = (remarks.isEmpty
+        ? <String>[]
+        : remarks.split(' | ').map((s) => s.trim()).where((s) => s.isNotEmpty).take(2).toList());
 
     return Material(
       color: Colors.white,
@@ -781,7 +758,6 @@ class _GridApCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Top row: name + status
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -819,7 +795,6 @@ class _GridApCard extends StatelessWidget {
               ),
               const SizedBox(height: 8),
 
-              // Amount + due (compact)
               Row(
                 children: [
                   Expanded(
@@ -862,7 +837,6 @@ class _GridApCard extends StatelessWidget {
                 ],
               ),
 
-              // Remarks (compact)
               if (remarkBullets.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Row(
@@ -953,7 +927,6 @@ class _VendorDetail extends ConsumerWidget {
               ),
               const SizedBox(height: 20),
 
-              // Summary Card
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
@@ -1083,11 +1056,9 @@ class _VendorDetail extends ConsumerWidget {
 
     final hasPrimaryCoa = (bill.primaryCoaGl ?? bill.primaryCoaTitle) != null;
 
-    final remarkBullets = (bill.remarks.isEmpty ? <String>[] : bill.remarks
-        .split(' | ')
-        .map((s) => s.trim())
-        .where((s) => s.isNotEmpty)
-        .toList());
+    final remarkBullets = (bill.remarks.isEmpty
+        ? <String>[]
+        : bill.remarks.split(' | ').map((s) => s.trim()).where((s) => s.isNotEmpty).toList());
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -1099,7 +1070,6 @@ class _VendorDetail extends ConsumerWidget {
       ),
       child: Column(
         children: [
-          // Header
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -1163,7 +1133,6 @@ class _VendorDetail extends ConsumerWidget {
           ),
           const SizedBox(height: 8),
 
-          // Due + Amount
           Row(
             children: [
               Expanded(
@@ -1205,7 +1174,6 @@ class _VendorDetail extends ConsumerWidget {
             ],
           ),
 
-          // Remarks + COA list
           if (remarkBullets.isNotEmpty || ((bill.coaList ?? '').trim().isNotEmpty)) ...[
             const SizedBox(height: 8),
             Row(
@@ -1218,26 +1186,28 @@ class _VendorDetail extends ConsumerWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       if (remarkBullets.isNotEmpty)
-                        ...remarkBullets.map((b) => Padding(
-                          padding: const EdgeInsets.only(bottom: 2),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text('• ', style: TextStyle(fontSize: 11)),
-                              Expanded(
-                                child: Text(
-                                  b,
-                                  softWrap: true,
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.grey.shade600,
-                                    fontStyle: FontStyle.italic,
+                        ...remarkBullets.map(
+                              (b) => Padding(
+                            padding: const EdgeInsets.only(bottom: 2),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text('• ', style: TextStyle(fontSize: 11)),
+                                Expanded(
+                                  child: Text(
+                                    b,
+                                    softWrap: true,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.grey.shade600,
+                                      fontStyle: FontStyle.italic,
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                        )),
+                        ),
                       if ((bill.coaList ?? '').trim().isNotEmpty) ...[
                         if (remarkBullets.isNotEmpty) const SizedBox(height: 6),
                         Text(
@@ -1271,12 +1241,17 @@ class _VendorDetail extends ConsumerWidget {
       child: Column(
         children: [
           Row(children: [
-            _sk(90, 12), const SizedBox(width: 8), Expanded(child: _sk(double.infinity, 12)),
-            const SizedBox(width: 8), _sk(60, 12),
+            _sk(90, 12),
+            const SizedBox(width: 8),
+            Expanded(child: _sk(double.infinity, 12)),
+            const SizedBox(width: 8),
+            _sk(60, 12),
           ]),
           const SizedBox(height: 8),
           Row(children: [
-            Expanded(child: _sk(double.infinity, 10)), const SizedBox(width: 8), _sk(80, 14),
+            Expanded(child: _sk(double.infinity, 10)),
+            const SizedBox(width: 8),
+            _sk(80, 14),
           ]),
         ],
       ),

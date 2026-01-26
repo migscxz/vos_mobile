@@ -59,8 +59,7 @@ class SyncRepository {
     ''');
 
     final base = api.baseUrl; // <-- keep exactly this
-    final rows =
-    await db.query('kv_store', where: 'k = ?', whereArgs: ['api_base']);
+    final rows = await db.query('kv_store', where: 'k = ?', whereArgs: ['api_base']);
     final saved = rows.isNotEmpty ? rows.first['v'] as String? : null;
 
     if (saved == null || saved != base) {
@@ -83,11 +82,8 @@ class SyncRepository {
     final db = await _db;
 
     // Discover which tables actually exist so we don't crash
-    final existingRows = await db.rawQuery(
-      "SELECT name FROM sqlite_master WHERE type = 'table'",
-    );
-    final existingTables =
-    existingRows.map((e) => (e['name'] as String?) ?? '').toSet();
+    final existingRows = await db.rawQuery("SELECT name FROM sqlite_master WHERE type = 'table'");
+    final existingTables = existingRows.map((e) => (e['name'] as String?) ?? '').toSet();
 
     final tables = <String>[
       // Delivery
@@ -119,6 +115,9 @@ class SyncRepository {
       'units',
       'divisions',
 
+      // NEW: Product classification (was missing in wipe)
+      'product_classification',
+
       // Masterfiles
       'user',
       'branches',
@@ -135,6 +134,23 @@ class SyncRepository {
       'disbursement_payments',
       'disbursement_payables',
       'disbursement',
+
+      // ======================
+      // INVENTORY (NEW)
+      // ======================
+      'physical_inventory',
+      'physical_inventory_details',
+      'purchase_order',
+      'purchase_order_receiving',
+      'stock_transfer',
+      'stock_adjustment_header',
+      'stock_adjustment',
+      'consolidator',
+      'consolidator_details',
+      'consolidator_dispatches',
+      'dispatch_plan',
+      'unfulfilled_sales_transaction',
+      'unfulfilled_sales_transaction_details',
     ];
 
     final batch = db.batch();
@@ -165,9 +181,7 @@ class SyncRepository {
         if (name == pk) {
           final t = (row['type']?.toString() ?? '').toUpperCase();
           if (t.contains('INT')) return 'INTEGER';
-          // Some schemas use TEXT / VARCHAR / CHAR
           if (t.contains('CHAR') || t.contains('CLOB') || t.contains('TEXT')) return 'TEXT';
-          // REAL/NUMERIC are fine too, but PRIMARY KEY is usually INTEGER/TEXT
           return t.isEmpty ? 'TEXT' : t;
         }
       }
@@ -179,7 +193,7 @@ class SyncRepository {
 
   /// Remove local rows whose primary key is NOT in [remoteIds].
   ///
-  /// FIX: Uses a TEMP table + chunked inserts, then deletes using NOT EXISTS
+  /// FIX: Uses a TEMP table + chunked inserts, then deletes using NOT IN (select)
   /// so the DELETE statement has 0 bound variables (avoids "too many SQL variables").
   Future<void> _purgeNotIn({
     required String table,
@@ -189,57 +203,43 @@ class SyncRepository {
     final db = await _db;
 
     if (!_isSafeIdent(table) || !_isSafeIdent(pk)) {
-      throw ArgumentError('Unsafe table/pk identifier: table="$table", pk="$pk"');
+      throw ArgumentError('Unsafe identifier table=$table pk=$pk');
     }
 
-    final ids = remoteIds.where((e) => e != null).toList(growable: false);
+    final ids = remoteIds
+        .where((e) => e != null)
+        .map((e) => e!.toString().trim())
+        .where((s) => s.isNotEmpty)
+        .toList(growable: false);
 
-    // If server returned nothing, wipe table (fresh/empty server).
+    // If server returned nothing, wipe table.
     if (ids.isEmpty) {
       await db.delete(table);
       return;
     }
 
-    // IMPORTANT: syncAll() uses Future.wait(), so multiple purges can run concurrently.
-    // Use a unique temp table name per purge call to avoid collisions.
-    final tmp =
-        'tmp_keep_${table}_${pk}_${DateTime.now().microsecondsSinceEpoch}';
+    final tmp = '__keep_${table}_${pk}'.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '_');
 
     await db.transaction((txn) async {
-      final pkType = await _inferPkSqliteType(txn, table, pk);
+      await txn.execute('DROP TABLE IF EXISTS $tmp;');
+      await txn.execute('CREATE TEMP TABLE $tmp (id TEXT PRIMARY KEY);');
 
-      // Create a dedicated TEMP table for this purge
-      await txn.execute('DROP TABLE IF EXISTS $tmp');
-      await txn.execute('CREATE TEMP TABLE $tmp (id $pkType PRIMARY KEY)');
-
-      // Insert remote IDs into temp table in chunks to respect variable limits.
-      // Keep chunks comfortably under 999.
-      const maxVarsPerStmt = 500;
-
-      for (var i = 0; i < ids.length; i += maxVarsPerStmt) {
-        final end = (i + maxVarsPerStmt <= ids.length) ? i + maxVarsPerStmt : ids.length;
-        final part = ids.sublist(i, end);
-
-        final valuesSql = List.filled(part.length, '(?)').join(',');
-        final sql = 'INSERT OR IGNORE INTO $tmp(id) VALUES $valuesSql';
-
-        // Keep argument types intact when possible (int stays int, etc.)
-        await txn.rawInsert(sql, part);
+      final batch = txn.batch();
+      for (final id in ids) {
+        batch.insert(
+          tmp,
+          {'id': id},
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
       }
+      await batch.commit(noResult: true);
 
-      // Delete any local rows whose pk is not in temp keep table
-      // (No variables used here).
       await txn.execute('''
         DELETE FROM $table
-        WHERE NOT EXISTS (
-          SELECT 1
-          FROM $tmp k
-          WHERE k.id = $table.$pk
-        )
+        WHERE CAST($pk AS TEXT) NOT IN (SELECT id FROM $tmp)
       ''');
 
-      // Clean up temp table
-      await txn.execute('DROP TABLE IF EXISTS $tmp');
+      await txn.execute('DROP TABLE IF EXISTS $tmp;');
     });
   }
 
@@ -247,61 +247,18 @@ class SyncRepository {
   // SYNC ORCHESTRATION
   // =============================
 
-  /// Original sync (parallel, no progress). Used by app init.
+  /// Original sync (NO progress). Used by app init.
   /// Set [purge]=true to drop local rows not present on server.
+  ///
+  /// UPDATED: Run sequentially (no Future.wait) to avoid sqlite "database locked"
+  /// and to keep write transactions predictable.
   Future<void> syncAll({bool purge = false}) async {
-    // Guard against server switch
     await _resetIfServerBaseChanged();
-    await Future.wait([
-      // Delivery
-      syncPostDispatchPlan(purge: purge),
-      syncPostDispatchInvoices(purge: purge),
-      syncPostDispatchBudgeting(purge: purge),
-      syncPostDispatchPlanStaff(purge: purge),
 
-      // Sales & AR
-      syncSalesInvoice(purge: purge),
-      syncSalesInvoicePayments(purge: purge),
-      syncSalesOrder(purge: purge),
-
-      // Master refs for products
-      syncBrand(purge: purge),
-      syncCategories(purge: purge),
-      syncUnits(purge: purge),
-      syncProductPerSupplier(purge: purge),
-      syncProductClassification(purge: purge),
-
-      // Itemized dependencies / returns
-      syncProducts(purge: purge),
-      syncSalesInvoiceDetails(purge: purge),
-      syncSalesReturnDetails(purge: purge),
-      syncSalesInvoiceSalesReturn(purge: purge),
-
-      // Supporting master & lookups
-      syncSalesInvoiceType(purge: purge),
-      syncOperation(purge: purge),
-      syncPaymentTerms(purge: purge),
-      syncSalesman(purge: purge),
-      syncSalesReturn(purge: purge),
-      syncDivisions(purge: purge),
-
-      // Masterfiles
-      syncUsers(purge: purge),
-      syncBranches(purge: purge),
-      syncVehicles(purge: purge),
-      syncCustomers(purge: purge),
-      syncSuppliers(purge: purge),
-
-      // Assets & Equipment
-      syncAssetsAndEquipment(purge: purge),
-
-      // AP / Disbursement
-      syncBankAccounts(purge: purge),
-      syncChartOfAccounts(purge: purge),
-      syncDisbursement(purge: purge),
-      syncDisbursementPayables(purge: purge),
-      syncDisbursementPayments(purge: purge),
-    ]);
+    final tasks = _buildSyncTasks(purge);
+    for (final t in tasks) {
+      await t.run();
+    }
   }
 
   /// Full reseed—wipe local then re-sync everything with purge.
@@ -352,6 +309,23 @@ class SyncRepository {
       _SyncTask('Customers', () => syncCustomers(purge: purge)),
       _SyncTask('Suppliers', () => syncSuppliers(purge: purge)),
 
+      // ======================
+      // INVENTORY (NEW)
+      // ======================
+      _SyncTask('Physical Inventory', () => syncPhysicalInventory(purge: purge)),
+      _SyncTask('Physical Inventory Details', () => syncPhysicalInventoryDetails(purge: purge)),
+      _SyncTask('Purchase Orders', () => syncPurchaseOrder(purge: purge)),
+      _SyncTask('Purchase Order Receiving', () => syncPurchaseOrderReceiving(purge: purge)),
+      _SyncTask('Stock Transfer', () => syncStockTransfer(purge: purge)),
+      _SyncTask('Stock Adjustment Header', () => syncStockAdjustmentHeader(purge: purge)),
+      _SyncTask('Stock Adjustment', () => syncStockAdjustment(purge: purge)),
+      _SyncTask('Consolidator', () => syncConsolidator(purge: purge)),
+      _SyncTask('Consolidator Details', () => syncConsolidatorDetails(purge: purge)),
+      _SyncTask('Consolidator Dispatches', () => syncConsolidatorDispatches(purge: purge)),
+      _SyncTask('Dispatch Plan', () => syncDispatchPlan(purge: purge)),
+      _SyncTask('Unfulfilled Sales Transaction', () => syncUnfulfilledSalesTransaction(purge: purge)),
+      _SyncTask('Unfulfilled Sales Transaction Details', () => syncUnfulfilledSalesTransactionDetails(purge: purge)),
+
       // Assets & Equipment
       _SyncTask('Assets & Equipment', () => syncAssetsAndEquipment(purge: purge)),
 
@@ -362,40 +336,6 @@ class SyncRepository {
       _SyncTask('Disbursement Payables', () => syncDisbursementPayables(purge: purge)),
       _SyncTask('Disbursement Payments', () => syncDisbursementPayments(purge: purge)),
     ];
-  }
-
-  /// /items/product_classification?limit=-1
-  Future<void> syncProductClassification({bool purge = false}) async {
-    final db = await _db;
-
-    final rows = await api.getList('/items/product_classification?limit=-1');
-    final batch = db.batch();
-
-    for (final r in rows) {
-      batch.insert(
-        'product_classification',
-        {
-          // PK is product_id (no "id" column in your table)
-          'product_id': _asIntNullable(r['product_id']),
-          'abc_class': _asStringNullable(r['abc_class']),
-          'abc_class_forecast': _asStringNullable(r['abc_class_forecast']),
-          'abc_class_sold': _asStringNullable(r['abc_class_sold']),
-          // API sends this as string ("1.20") so parse to REAL
-          'forecast_multiplier': _asDouble(r['forecast_multiplier']),
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
-    }
-
-    await batch.commit(noResult: true);
-
-    if (purge) {
-      await _purgeNotIn(
-        table: 'product_classification',
-        pk: 'product_id', // 👈 primary key in SQLite
-        remoteIds: rows.map((e) => e['product_id']),
-      );
-    }
   }
 
   Future<List<SyncTaskError>> syncAllWithProgress({
@@ -411,7 +351,6 @@ class SyncRepository {
     for (var i = 0; i < tasks.length; i++) {
       final task = tasks[i];
 
-      // Notify UI
       onProgress?.call(SyncProgress(
         step: i + 1,
         total: total,
@@ -421,10 +360,7 @@ class SyncRepository {
       try {
         await task.run();
       } catch (e, st) {
-        // Keep going but record the error
-        errors.add(
-          SyncTaskError(label: task.label, error: e, stackTrace: st),
-        );
+        errors.add(SyncTaskError(label: task.label, error: e, stackTrace: st));
         // ignore: avoid_print
         print('Sync error in ${task.label}: $e');
       }
@@ -457,9 +393,7 @@ class SyncRepository {
     if (v is num) return v != 0 ? 1 : 0;
     if (v is String) {
       final s = v.toLowerCase().trim();
-      return (s == '1' || s == 'true' || s == 't' || s == 'yes' || s == 'y')
-          ? 1
-          : 0;
+      return (s == '1' || s == 'true' || s == 't' || s == 'yes' || s == 'y') ? 1 : 0;
     }
     // Directus-like Buffer: { type: 'Buffer', data: [0|1] }
     if (v is Map && v['data'] is List && (v['data'] as List).isNotEmpty) {
@@ -475,7 +409,43 @@ class SyncRepository {
     return s.isEmpty ? null : s;
   }
 
-  /* ----------------- SYNC FUNCTIONS (with purge) ----------------- */
+  // ============================
+  // SYNC FUNCTIONS (with purge)
+  // ============================
+
+  /// /items/product_classification?limit=-1
+  Future<void> syncProductClassification({bool purge = false}) async {
+    final db = await _db;
+
+    final rows = await api.getList('/items/product_classification?limit=-1');
+    final batch = db.batch();
+
+    for (final r in rows) {
+      batch.insert(
+        'product_classification',
+        {
+          // PK is product_id (no "id" column in your table)
+          'product_id': _asIntNullable(r['product_id']),
+          'abc_class': _asStringNullable(r['abc_class']),
+          'abc_class_forecast': _asStringNullable(r['abc_class_forecast']),
+          'abc_class_sold': _asStringNullable(r['abc_class_sold']),
+          // API sends this as string ("1.20") so parse to REAL
+          'forecast_multiplier': _asDouble(r['forecast_multiplier']),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+
+    await batch.commit(noResult: true);
+
+    if (purge) {
+      await _purgeNotIn(
+        table: 'product_classification',
+        pk: 'product_id', // primary key in SQLite
+        remoteIds: rows.map((e) => e['product_id']),
+      );
+    }
+  }
 
   /// NEW: Assets & Equipment
   Future<void> syncAssetsAndEquipment({bool purge = false}) async {
@@ -585,6 +555,61 @@ class SyncRepository {
     }
   }
 
+  Future<void> syncPostDispatchBudgeting({bool purge = false}) async {
+    final db = await _db;
+    final rows = await api.getList('/items/post_dispatch_budgeting?limit=-1');
+    final batch = db.batch();
+    for (final r in rows) {
+      batch.insert(
+        'post_dispatch_budgeting',
+        {
+          'id': r['id'],
+          'post_dispatch_plan_id': r['post_dispatch_plan_id'],
+          'coa_id': r['coa_id'],
+          'remarks': r['remarks'],
+          'amount': _asDouble(r['amount']),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+    await batch.commit(noResult: true);
+
+    if (purge) {
+      await _purgeNotIn(
+        table: 'post_dispatch_budgeting',
+        pk: 'id',
+        remoteIds: rows.map((e) => e['id']),
+      );
+    }
+  }
+
+  Future<void> syncPostDispatchPlanStaff({bool purge = false}) async {
+    final db = await _db;
+    final rows = await api.getList('/items/post_dispatch_plan_staff?limit=-1');
+    final batch = db.batch();
+    for (final r in rows) {
+      batch.insert(
+        'post_dispatch_plan_staff',
+        {
+          'id': r['id'],
+          'post_dispatch_plan_id': r['post_dispatch_plan_id'],
+          'user_id': r['user_id'],
+          'role': r['role'],
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+    await batch.commit(noResult: true);
+
+    if (purge) {
+      await _purgeNotIn(
+        table: 'post_dispatch_plan_staff',
+        pk: 'id',
+        remoteIds: rows.map((e) => e['id']),
+      );
+    }
+  }
+
   // includes payment_terms + due_date + is_posted (+ new v10 fields if present)
   Future<void> syncSalesInvoice({bool purge = false}) async {
     final db = await _db;
@@ -674,20 +699,30 @@ class SyncRepository {
     final db = await _db;
     final rows = await api.getList('/items/sales_order?limit=-1');
     final batch = db.batch();
+
     for (final r in rows) {
       batch.insert(
         'sales_order',
         {
-          'order_id': r['order_id'],
-          'order_no': r['order_no'],
-          'customer_code': r['customer_code'],
-          'supplier_id': r['supplier_id'],
-          'branch_id': r['branch_id'],
-          'order_status': r['order_status'],
+          'order_id': _asIntNullable(r['order_id']),
+          'order_no': _asStringNullable(r['order_no']),
+          'po_no': _asStringNullable(r['po_no']),
+          'customer_code': _asStringNullable(r['customer_code']),
+          'salesman_id': _asIntNullable(r['salesman_id']),
+          'supplier_id': _asIntNullable(r['supplier_id']),
+          'branch_id': _asIntNullable(r['branch_id']),
+          'order_date': _asStringNullable(r['order_date']),
+          'delivery_date': _asStringNullable(r['delivery_date']),
+          'due_date': _asStringNullable(r['due_date']),
+          'payment_terms': _asIntNullable(r['payment_terms']),
+          'order_status': _asStringNullable(r['order_status']),
+          'total_amount': _asDouble(r['total_amount']),
+          'allocated_amount': _asDouble(r['allocated_amount']),
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     }
+
     await batch.commit(noResult: true);
 
     if (purge) {
@@ -896,6 +931,7 @@ class SyncRepository {
   }
 
   /// /items/sales_return_details?limit=-1
+  /// UPDATED: add gross_amount + sales_return_type_id (schema v37)
   Future<void> syncSalesReturnDetails({bool purge = false}) async {
     final db = await _db;
     final rows = await api.getList('/items/sales_return_details?limit=-1');
@@ -911,6 +947,8 @@ class SyncRepository {
           'unit_price': _asDouble(r['unit_price']),
           'total_amount': _asDouble(r['total_amount']),
           'discount_amount': _asDouble(r['discount_amount']),
+          'gross_amount': _asDouble(r['gross_amount']),
+          'sales_return_type_id': _asIntNullable(r['sales_return_type_id']) ?? 0,
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
@@ -1044,7 +1082,7 @@ class SyncRepository {
     }
   }
 
-  /// NEW: /items/divisions?limit=-1
+  /// NEW: /items/division?limit=-1
   Future<void> syncDivisions({bool purge = false}) async {
     final db = await _db;
     final rows = await api.getList('/items/division?limit=-1');
@@ -1191,6 +1229,7 @@ class SyncRepository {
     }
   }
 
+  /// UPDATED: branches schema alignment (v37)
   Future<void> syncBranches({bool purge = false}) async {
     final db = await _db;
     final rows = await api.getList('/items/branches?limit=-1');
@@ -1200,8 +1239,19 @@ class SyncRepository {
         'branches',
         {
           'id': r['id'],
-          'branch_name': r['branch_name'],
-          'city': r['city'],
+          'branch_description': _asStringNullable(r['branch_description']),
+          'branch_name': _asStringNullable(r['branch_name']),
+          'branch_head': _asIntNullable(r['branch_head']),
+          'branch_code': _asStringNullable(r['branch_code']),
+          'state_province': _asStringNullable(r['state_province']),
+          'city': _asStringNullable(r['city']),
+          'brgy': _asStringNullable(r['brgy']),
+          'phone_number': _asStringNullable(r['phone_number']),
+          'postal_code': _asStringNullable(r['postal_code']),
+          'date_added': _asStringNullable(r['date_added']),
+          'isMoving': _asBoolToInt(r['isMoving']),
+          'isReturn': _asBoolToInt(r['isReturn']),
+          'isActive': _asBoolToInt(r['isActive']),
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
@@ -1243,6 +1293,7 @@ class SyncRepository {
     }
   }
 
+  /// UPDATED: add store_name (v37)
   Future<void> syncCustomers({bool purge = false}) async {
     final db = await _db;
     final rows = await api.getList('/items/customer?limit=-1');
@@ -1251,11 +1302,12 @@ class SyncRepository {
       batch.insert(
         'customer',
         {
-          'customer_code': r['customer_code'],
-          'customer_name': r['customer_name'],
-          'brgy': r['brgy'],
-          'city': r['city'],
-          'province': r['province'],
+          'customer_code': _asStringNullable(r['customer_code']),
+          'customer_name': _asStringNullable(r['customer_name']),
+          'store_name': _asStringNullable(r['store_name']),
+          'brgy': _asStringNullable(r['brgy']),
+          'city': _asStringNullable(r['city']),
+          'province': _asStringNullable(r['province']),
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
@@ -1271,6 +1323,7 @@ class SyncRepository {
     }
   }
 
+  /// UPDATED: add nonBuy + isActive (v37)
   Future<void> syncSuppliers({bool purge = false}) async {
     final db = await _db;
     final rows = await api.getList('/items/suppliers?limit=-1');
@@ -1280,8 +1333,10 @@ class SyncRepository {
         'suppliers',
         {
           'id': r['id'],
-          'supplier_shortcut': r['supplier_shortcut'],
-          'supplier_name': r['supplier_name'],
+          'supplier_shortcut': _asStringNullable(r['supplier_shortcut']),
+          'supplier_name': _asStringNullable(r['supplier_name']),
+          'nonBuy': _asBoolToInt(r['nonBuy']),
+          'isActive': _asBoolToInt(r['isActive']),
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
@@ -1297,60 +1352,416 @@ class SyncRepository {
     }
   }
 
-  Future<void> syncPostDispatchBudgeting({bool purge = false}) async {
+  // ============================
+  // INVENTORY SYNC (NEW)
+  // ============================
+
+  Future<void> syncPhysicalInventory({bool purge = false}) async {
     final db = await _db;
-    final rows = await api.getList('/items/post_dispatch_budgeting?limit=-1');
+    final rows = await api.getList('/items/physical_inventory?limit=-1');
     final batch = db.batch();
+
     for (final r in rows) {
       batch.insert(
-        'post_dispatch_budgeting',
+        'physical_inventory',
         {
           'id': r['id'],
-          'post_dispatch_plan_id': r['post_dispatch_plan_id'],
-          'coa_id': r['coa_id'],
-          'remarks': r['remarks'],
+          'ph_no': _asStringNullable(r['ph_no']),
+          'date_encoded': _asStringNullable(r['date_encoded']),
+          'cutOff_date': _asStringNullable(r['cutOff_date']),
+          'starting_date': _asStringNullable(r['starting_date']),
+          'price_type': _asStringNullable(r['price_type']),
+          'stock_type': _asStringNullable(r['stock_type']),
+          'branch_id': _asIntNullable(r['branch_id']),
+          'remarks': _asStringNullable(r['remarks']),
+          'isComitted': _asBoolToInt(r['isComitted']),
+          'isCancelled': _asBoolToInt(r['isCancelled']),
+          'total_amount': _asDouble(r['total_amount']),
+          'supplier_id': _asIntNullable(r['supplier_id']),
+          'category_id': _asIntNullable(r['category_id']),
+          'encoder_id': _asIntNullable(r['encoder_id']),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+
+    await batch.commit(noResult: true);
+
+    if (purge) {
+      await _purgeNotIn(
+        table: 'physical_inventory',
+        pk: 'id',
+        remoteIds: rows.map((e) => e['id']),
+      );
+    }
+  }
+
+  Future<void> syncPhysicalInventoryDetails({bool purge = false}) async {
+    final db = await _db;
+    final rows = await api.getList('/items/physical_inventory_details?limit=-1');
+    final batch = db.batch();
+
+    for (final r in rows) {
+      batch.insert(
+        'physical_inventory_details',
+        {
+          'id': r['id'],
+          'ph_id': _asIntNullable(r['ph_id']),
+          'date_encoded': _asStringNullable(r['date_encoded']),
+          'product_id': _asIntNullable(r['product_id']),
+          'unit_price': _asDouble(r['unit_price']),
+          'system_count': _asDouble(r['system_count']),
+          'physical_count': _asDouble(r['physical_count']),
+          'variance': _asDouble(r['variance']),
+          'difference_cost': _asDouble(r['difference_cost']),
           'amount': _asDouble(r['amount']),
+          'offset_match': _asIntNullable(r['offset_match']),
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     }
+
     await batch.commit(noResult: true);
 
     if (purge) {
       await _purgeNotIn(
-        table: 'post_dispatch_budgeting',
+        table: 'physical_inventory_details',
         pk: 'id',
         remoteIds: rows.map((e) => e['id']),
       );
     }
   }
 
-  Future<void> syncPostDispatchPlanStaff({bool purge = false}) async {
+  Future<void> syncPurchaseOrder({bool purge = false}) async {
     final db = await _db;
-    final rows = await api.getList('/items/post_dispatch_plan_staff?limit=-1');
+    final rows = await api.getList('/items/purchase_order?limit=-1');
     final batch = db.batch();
+
     for (final r in rows) {
       batch.insert(
-        'post_dispatch_plan_staff',
+        'purchase_order',
         {
-          'id': r['id'],
-          'post_dispatch_plan_id': r['post_dispatch_plan_id'],
-          'user_id': r['user_id'],
-          'role': r['role'],
+          'purchase_order_id': _asIntNullable(r['purchase_order_id'] ?? r['id']),
+          'purchase_order_no': _asStringNullable(r['purchase_order_no'] ?? r['po_no']),
+          'inventory_status': _asIntNullable(r['inventory_status']),
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     }
+
     await batch.commit(noResult: true);
 
     if (purge) {
       await _purgeNotIn(
-        table: 'post_dispatch_plan_staff',
+        table: 'purchase_order',
+        pk: 'purchase_order_id',
+        remoteIds: rows.map((e) => e['purchase_order_id'] ?? e['id']),
+      );
+    }
+  }
+
+  Future<void> syncPurchaseOrderReceiving({bool purge = false}) async {
+    final db = await _db;
+    final rows = await api.getList('/items/purchase_order_receiving?limit=-1');
+    final batch = db.batch();
+
+    for (final r in rows) {
+      batch.insert(
+        'purchase_order_receiving',
+        {
+          'id': r['id'],
+          'purchase_order_id': _asIntNullable(r['purchase_order_id']),
+          'product_id': _asIntNullable(r['product_id']),
+          'branch_id': _asIntNullable(r['branch_id']),
+          'received_date': _asStringNullable(r['received_date']),
+          'received_quantity': _asDouble(r['received_quantity']),
+          'receipt_no': _asStringNullable(r['receipt_no']),
+          'isPosted': _asBoolToInt(r['isPosted']),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+
+    await batch.commit(noResult: true);
+
+    if (purge) {
+      await _purgeNotIn(
+        table: 'purchase_order_receiving',
         pk: 'id',
         remoteIds: rows.map((e) => e['id']),
       );
     }
   }
+
+  Future<void> syncStockTransfer({bool purge = false}) async {
+    final db = await _db;
+    final rows = await api.getList('/items/stock_transfer?limit=-1');
+    final batch = db.batch();
+
+    for (final r in rows) {
+      batch.insert(
+        'stock_transfer',
+        {
+          'id': r['id'],
+          'order_no': _asStringNullable(r['order_no']),
+          'product_id': _asIntNullable(r['product_id']),
+          'source_branch': _asIntNullable(r['source_branch']),
+          'target_branch': _asIntNullable(r['target_branch']),
+          'received_quantity': _asDouble(r['received_quantity']),
+          'date_received': _asStringNullable(r['date_received']),
+          'status': _asStringNullable(r['status']),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+
+    await batch.commit(noResult: true);
+
+    if (purge) {
+      await _purgeNotIn(
+        table: 'stock_transfer',
+        pk: 'id',
+        remoteIds: rows.map((e) => e['id']),
+      );
+    }
+  }
+
+  Future<void> syncStockAdjustmentHeader({bool purge = false}) async {
+    final db = await _db;
+    final rows = await api.getList('/items/stock_adjustment_header?limit=-1');
+    final batch = db.batch();
+
+    for (final r in rows) {
+      batch.insert(
+        'stock_adjustment_header',
+        {
+          'id': r['id'],
+          'doc_no': _asStringNullable(r['doc_no']),
+          'branch_id': _asIntNullable(r['branch_id']),
+          'remarks': _asStringNullable(r['remarks']),
+          'isPosted': _asBoolToInt(r['isPosted']),
+          'postedAt': _asStringNullable(r['postedAt']),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+
+    await batch.commit(noResult: true);
+
+    if (purge) {
+      await _purgeNotIn(
+        table: 'stock_adjustment_header',
+        pk: 'id',
+        remoteIds: rows.map((e) => e['id']),
+      );
+    }
+  }
+
+  Future<void> syncStockAdjustment({bool purge = false}) async {
+    final db = await _db;
+    final rows = await api.getList('/items/stock_adjustment?limit=-1');
+    final batch = db.batch();
+
+    for (final r in rows) {
+      batch.insert(
+        'stock_adjustment',
+        {
+          'id': r['id'],
+          'doc_no': _asStringNullable(r['doc_no']),
+          'product_id': _asIntNullable(r['product_id']),
+          'branch_id': _asIntNullable(r['branch_id']),
+          'type': _asStringNullable(r['type']),
+          'quantity': _asDouble(r['quantity']),
+          'remarks': _asStringNullable(r['remarks']),
+          'created_at': _asStringNullable(r['created_at']),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+
+    await batch.commit(noResult: true);
+
+    if (purge) {
+      await _purgeNotIn(
+        table: 'stock_adjustment',
+        pk: 'id',
+        remoteIds: rows.map((e) => e['id']),
+      );
+    }
+  }
+
+  Future<void> syncConsolidator({bool purge = false}) async {
+    final db = await _db;
+    final rows = await api.getList('/items/consolidator?limit=-1');
+    final batch = db.batch();
+
+    for (final r in rows) {
+      batch.insert(
+        'consolidator',
+        {
+          'id': r['id'],
+          'consolidator_no': _asStringNullable(r['consolidator_no']),
+          'updated_at': _asStringNullable(r['updated_at']),
+          'status': _asStringNullable(r['status']),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+
+    await batch.commit(noResult: true);
+
+    if (purge) {
+      await _purgeNotIn(
+        table: 'consolidator',
+        pk: 'id',
+        remoteIds: rows.map((e) => e['id']),
+      );
+    }
+  }
+
+  Future<void> syncConsolidatorDetails({bool purge = false}) async {
+    final db = await _db;
+    final rows = await api.getList('/items/consolidator_details?limit=-1');
+    final batch = db.batch();
+
+    for (final r in rows) {
+      batch.insert(
+        'consolidator_details',
+        {
+          'id': r['id'],
+          'consolidator_id': _asIntNullable(r['consolidator_id']),
+          'product_id': _asIntNullable(r['product_id']),
+          'picked_quantity': _asDouble(r['picked_quantity']),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+
+    await batch.commit(noResult: true);
+
+    if (purge) {
+      await _purgeNotIn(
+        table: 'consolidator_details',
+        pk: 'id',
+        remoteIds: rows.map((e) => e['id']),
+      );
+    }
+  }
+
+  Future<void> syncConsolidatorDispatches({bool purge = false}) async {
+    final db = await _db;
+    final rows = await api.getList('/items/consolidator_dispatches?limit=-1');
+    final batch = db.batch();
+
+    for (final r in rows) {
+      batch.insert(
+        'consolidator_dispatches',
+        {
+          'id': r['id'],
+          'consolidator_id': _asIntNullable(r['consolidator_id']),
+          'dispatch_no': _asStringNullable(r['dispatch_no']),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+
+    await batch.commit(noResult: true);
+
+    if (purge) {
+      await _purgeNotIn(
+        table: 'consolidator_dispatches',
+        pk: 'id',
+        remoteIds: rows.map((e) => e['id']),
+      );
+    }
+  }
+
+  Future<void> syncDispatchPlan({bool purge = false}) async {
+    final db = await _db;
+    final rows = await api.getList('/items/dispatch_plan?limit=-1');
+    final batch = db.batch();
+
+    for (final r in rows) {
+      batch.insert(
+        'dispatch_plan',
+        {
+          'id': r['id'],
+          'dispatch_no': _asStringNullable(r['dispatch_no']),
+          'branch_id': _asIntNullable(r['branch_id']),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+
+    await batch.commit(noResult: true);
+
+    if (purge) {
+      await _purgeNotIn(
+        table: 'dispatch_plan',
+        pk: 'id',
+        remoteIds: rows.map((e) => e['id']),
+      );
+    }
+  }
+
+  Future<void> syncUnfulfilledSalesTransaction({bool purge = false}) async {
+    final db = await _db;
+    final rows = await api.getList('/items/unfulfilled_sales_transaction?limit=-1');
+    final batch = db.batch();
+
+    for (final r in rows) {
+      batch.insert(
+        'unfulfilled_sales_transaction',
+        {
+          'id': r['id'],
+          'sales_invoice_id': _asIntNullable(r['sales_invoice_id']),
+          'date_acknowledged': _asStringNullable(r['date_acknowledged']),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+
+    await batch.commit(noResult: true);
+
+    if (purge) {
+      await _purgeNotIn(
+        table: 'unfulfilled_sales_transaction',
+        pk: 'id',
+        remoteIds: rows.map((e) => e['id']),
+      );
+    }
+  }
+
+  Future<void> syncUnfulfilledSalesTransactionDetails({bool purge = false}) async {
+    final db = await _db;
+    final rows = await api.getList('/items/unfulfilled_sales_transaction_details?limit=-1');
+    final batch = db.batch();
+
+    for (final r in rows) {
+      batch.insert(
+        'unfulfilled_sales_transaction_details',
+        {
+          'id': r['id'],
+          'unfulfilled_sales_transaction_id': _asIntNullable(r['unfulfilled_sales_transaction_id']),
+          'sales_invoice_detail_id': _asIntNullable(r['sales_invoice_detail_id']),
+          'missing_quantity': _asDouble(r['missing_quantity']),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+
+    await batch.commit(noResult: true);
+
+    if (purge) {
+      await _purgeNotIn(
+        table: 'unfulfilled_sales_transaction_details',
+        pk: 'id',
+        remoteIds: rows.map((e) => e['id']),
+      );
+    }
+  }
+
+  // ---------- AP / Disbursement ----------
 
   Future<void> syncBankAccounts({bool purge = false}) async {
     final db = await _db;
@@ -1429,26 +1840,26 @@ class SyncRepository {
     final batch = db.batch();
     for (final r in rows) {
       batch.insert(
-        'disbursement',
-        {
-          'id': r['id'],
-          'doc_no': r['doc_no'],
-          'transaction_date': r['transaction_date'],
-          'encoder_id': r['encoder_id'],
-          'approver_id': r['approver_id'],
-          'date_approved': r['date_approved'],
-          'date_created': r['date_created'],
-          'date_posted': r['date_posted'],
-          'date_updated': r['date_updated'],
-          'division_id': r['division_id'],
-          'payee': r['payee'],
-          'total_amount': _asDouble(r['total_amount']),
-          'paid_amount': _asDouble(r['paid_amount']),
-          'isPosted': _asBoolToInt(r['isPosted']),
-          'posted_by': r['posted_by'],
-          'remarks': r['remarks'],
-          'transaction_type': r['transaction_type'],
-        },
+          'disbursement',
+          {
+            'id': r['id'],
+            'doc_no': r['doc_no'],
+            'transaction_date': r['transaction_date'],
+            'encoder_id': r['encoder_id'],
+            'approver_id': r['approver_id'],
+            'date_approved': r['date_approved'],
+            'date_created': r['date_created'],
+            'date_posted': r['date_posted'],
+            'date_updated': r['date_updated'],
+            'division_id': r['division_id'],
+            'payee': r['payee'],
+            'total_amount': _asDouble(r['total_amount']),
+            'paid_amount': _asDouble(r['paid_amount']),
+            'isPosted': _asBoolToInt(r['isPosted']),
+            'posted_by': r['posted_by'],
+            'remarks': r['remarks'],
+            'transaction_type': r['transaction_type'],
+          },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     }
@@ -1601,7 +2012,7 @@ class SyncRepository {
   /// Vendor cards (unpaid only; hide zero balances).
   Future<List<Map<String, Object?>>> getApVendorsSummary({
     String? search,
-    String? status, // 'Overdue' | 'Due Soon' | 'Not Due' | 'Settled' (we never return Settled here)
+    String? status, // 'Overdue' | 'Due Soon' | 'Not Due' | 'Settled'
     DateTime? fromDue,
     DateTime? toDue,
     int limit = 500,
@@ -1611,8 +2022,7 @@ class SyncRepository {
     final where = <String>[];
     final args = <Object?>[];
 
-    String _iso(DateTime d) =>
-        DateFormat('yyyy-MM-dd').format(d);
+    String _iso(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
 
     if (search != null && search.trim().isNotEmpty) {
       where.add('a.vendor LIKE ?');
@@ -1643,8 +2053,8 @@ class SyncRepository {
           header_remarks,
           line_remarks
         FROM v_ap_bills
-        WHERE is_posted = 0              -- unpaid only
-          AND COALESCE(balance, 0) > 0   -- hide zero/settled
+        WHERE is_posted = 0
+          AND COALESCE(balance, 0) > 0
       ),
       agg AS (
         SELECT
@@ -1704,8 +2114,6 @@ class SyncRepository {
       v.due_date                  AS due,
       v.balance                   AS amount,
 
-      /* Prefer header_remarks -> line_remarks from v_ap_bills.
-         If both are empty, fall back to raw line remarks, then header remarks. */
       COALESCE(
         NULLIF(TRIM(v.header_remarks), ''),
         NULLIF(TRIM(v.line_remarks), ''),
@@ -1733,8 +2141,8 @@ class SyncRepository {
 
     FROM v_ap_bills v
     WHERE v.payee_id = ?
-      AND v.is_posted = 0              -- unpaid only
-      AND COALESCE(v.balance,0) > 0    -- hide settled rows
+      AND v.is_posted = 0
+      AND COALESCE(v.balance,0) > 0
     ORDER BY COALESCE(v.due_date, v.transaction_date) ASC, v.disbursement_id ASC
   ''';
 
@@ -1742,8 +2150,7 @@ class SyncRepository {
   }
 
   /// Per vendor x COA totals.
-  Future<List<Map<String, Object?>>> getVendorCoaBreakdown(
-      int payeeId) async {
+  Future<List<Map<String, Object?>>> getVendorCoaBreakdown(int payeeId) async {
     final db = await _db;
     const sql = '''
       SELECT
@@ -1771,8 +2178,7 @@ class SyncRepository {
   }) async {
     final db = await _db;
     final args = <Object?>[];
-    String _iso(DateTime d) =>
-        DateFormat('yyyy-MM-dd').format(d);
+    String _iso(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
 
     final base = '''
       SELECT
@@ -1787,7 +2193,7 @@ class SyncRepository {
           FROM disbursement_payments p
           WHERE p.disbursement_id = d.id
         ), 0)                              AS paid_amount,
-        MAX(d.total_amount - COALESCE(( 
+        MAX(d.total_amount - COALESCE((
           SELECT SUM(COALESCE(amount,0))
           FROM disbursement_payments p
           WHERE p.disbursement_id = d.id
@@ -1844,8 +2250,7 @@ class SyncRepository {
   }) async {
     final db = await _db;
     final args = <Object?>[];
-    String _iso(DateTime d) =>
-        DateFormat('yyyy-MM-dd').format(d);
+    String _iso(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
 
     final base = '''
       SELECT
@@ -1911,8 +2316,7 @@ class SyncRepository {
     int offset = 0,
   }) async {
     final db = await _db;
-    String _iso(DateTime d) =>
-        DateFormat('yyyy-MM-dd').format(d);
+    String _iso(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
 
     final whereParts = <String>[];
     final params = <Object?>[];
@@ -1951,8 +2355,7 @@ class SyncRepository {
       params.add(_iso(to));
     }
 
-    final whereSql =
-    whereParts.isEmpty ? '' : 'WHERE ${whereParts.join(' AND ')}';
+    final whereSql = whereParts.isEmpty ? '' : 'WHERE ${whereParts.join(' AND ')}';
     final sql = '''
       $base
       $whereSql

@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vos_mobile/modules/reports/assets_and_equipments/assets_and_equipments_view.dart';
+import 'package:vos_mobile/modules/reports/inventory_report/inventory_report_view.dart';
 import '../../core/theme/app_theme.dart' as core_theme;
 import '../../state/app_state.dart';
 
@@ -12,6 +13,8 @@ import 'accounts_receivable/ar_view.dart';
 import 'disbursement/disburment_view.dart';
 import 'sales_report/sr_view.dart';
 import 'assets_and_equipments/assets_and_equipments_view.dart';
+import 'inventory_report/inventory_report_view.dart';
+
 
 class ReportView extends ConsumerWidget {
   const ReportView({super.key});
@@ -37,6 +40,10 @@ class ReportView extends ConsumerWidget {
         return const SalesReportView(); // Sales Report screen
       case 'asset':
         return const AssetsAndEquipmentsView();
+
+      case 'inventory':
+        return const InventoryView();
+
       default:
       // Fallback: generic shell for other report types
         final visual = _resolveVisual(selected.id, selected.title);
@@ -68,6 +75,8 @@ _ReportVisual _resolveVisual(String id, String titleFallback) {
       return const _ReportVisual(Icons.receipt_long, 'Disbursement');
     case 'sales':
       return const _ReportVisual(Icons.bar_chart, 'Sales Report');
+    case 'inventory':
+      return const _ReportVisual(Icons.inventory_rounded, 'Inventory');
     default:
       return _ReportVisual(Icons.insert_chart_outlined, titleFallback);
   }
