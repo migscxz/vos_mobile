@@ -9,6 +9,10 @@ import '../../data/local/app_db.dart';
 class SalesReportRow {
   final String invoiceNo;
   final DateTime? invoiceDate;
+
+  /// ✅ NEW: customer code (for export)
+  final String customerCode;
+
   final String customerName;
   final String customerAddress;
   final String salesman;
@@ -45,6 +49,10 @@ class SalesReportRow {
   SalesReportRow({
     required this.invoiceNo,
     required this.invoiceDate,
+
+    /// ✅ NEW (safe default; avoids breaking call sites)
+    this.customerCode = "",
+
     required this.customerName,
     required this.customerAddress,
     required this.salesman,
@@ -104,6 +112,42 @@ factory SalesReportRow.fromDb(Map<String, Object?> m) {
 
     final s = v.toString().toLowerCase().trim();
     return s == '1' || s == 'true' || s == 'y' || s == 'yes';
+    return SalesReportRow(
+      invoiceNo: (m['invoice_no'] ?? '').toString(),
+      invoiceDate: parseDate(m['invoice_date']?.toString()),
+
+      /// ✅ NEW: read from SQL alias
+      customerCode: (m['customer_code'] ?? m['customerCode'] ?? '').toString(),
+
+      customerName: (m['customer_name'] ?? '').toString(),
+      customerAddress: (m['customer_address'] ?? '').toString(),
+      salesman: (m['salesman'] ?? '').toString(),
+      branch: (m['branch'] ?? '').toString(),
+      paymentTerms: (m['payment_terms'] ?? '').toString(),
+      salesType: (m['sales_type'] ?? '').toString(),
+      invoiceType: (m['invoice_type'] ?? '').toString(),
+      transactionStatus: (m['transaction_status'] ?? '').toString(),
+      paymentStatus: (m['payment_status'] ?? '').toString(),
+      totalAmount: _num(m['total_amount']),
+      discountAmount: _num(m['discount_amount']),
+      amount: _num(m['amount']),
+      returnAmount: _num(m['return_amount_total'] ?? m['return_amount']),
+      collection: _num(m['collection']),
+      isDispatched: _bool(dispatchedRaw),
+      isPosted: _bool(postedRaw),
+      productName: _strN(m['product_name']),
+      productBrand: _strN(m['product_brand']),
+      productCategory: _strN(m['product_category']),
+      productSupplier: _strN(m['product_supplier']),
+      productUnitPrice: _numN(m['product_unit_price']),
+      productQuantity: _numN(m['product_quantity']),
+      productUnit: _strN(m['product_unit']),
+      productDiscountAmount: _numN(m['product_discount_amount']),
+      salesmanDivision: _strN(m['salesman_division']),
+      customerProvince: _strN(m['customer_province']),
+      customerCity: _strN(m['customer_city']),
+      inCases: _numN(m['in_cases']),
+    );
   }
 
   String? strN(dynamic v) => v?.toString();
@@ -150,11 +194,13 @@ factory SalesReportRow.fromDb(Map<String, Object?> m) {
 
  
   SalesReportRow copyWith({
+    String? customerCode,
     double? inCases,
   }) {
     return SalesReportRow(
       invoiceNo: invoiceNo,
       invoiceDate: invoiceDate,
+      customerCode: customerCode ?? this.customerCode,
       customerName: customerName,
       customerAddress: customerAddress,
       salesman: salesman,
@@ -290,6 +336,14 @@ class SalesReportState extends ChangeNotifier {
     return "COALESCE($co,'')";
   }
 
+  /// ✅ NEW: schema-aware customer_code expression (avoids "no such column")
+  String _customerCodeExprForSelect([String alias = '']) {
+    final cols = _viewColumns ?? {};
+    if (!cols.contains('customer_code')) return "''";
+    final a = alias.isEmpty ? '' : (alias.endsWith('.') ? alias : '$alias.');
+    return "COALESCE(${a}customer_code,'')";
+  }
+
   /// WHERE expression for equality filtering against selectedSupplier.
   (String? sql, List<Object?> args) _supplierWhereEq(String value) {
     final trimmed = value.trim();
@@ -400,6 +454,9 @@ class SalesReportState extends ChangeNotifier {
       // Page query with normalized supplier alias
       final supplierExpr = _supplierExprForSelect();
 
+      // ✅ customer_code expression (schema-aware)
+      final customerCodeAgg = "MAX(${_customerCodeExprForSelect('t')}) AS customer_code";
+
       // 🔁 Now we GROUP BY invoice_no so the GridView shows one row per invoice
       final pageSql = '''
         WITH inv AS (
@@ -412,6 +469,7 @@ class SalesReportState extends ChangeNotifier {
         SELECT
           t.invoice_no,
           MAX(t.invoice_date)                AS invoice_date,
+          $customerCodeAgg,
           MAX(t.customer_name)               AS customer_name,
           MAX(t.customer_address)            AS customer_address,
           MAX(t.salesman)                    AS salesman,
@@ -484,6 +542,10 @@ class SalesReportState extends ChangeNotifier {
     final args = built.$2;
     final supplierExpr = _supplierExprForSelect();
 
+    // ✅ customer_code exprs
+    final customerCodeExprVsr = "${_customerCodeExprForSelect('vsr')} AS customer_code";
+    final customerCodeExprPlain = "${_customerCodeExprForSelect()} AS customer_code";
+
     late final String sql;
 
     if (hasProductId) {
@@ -530,6 +592,7 @@ class SalesReportState extends ChangeNotifier {
         SELECT
           vsr.invoice_no,
           vsr.invoice_date,
+          $customerCodeExprVsr,
           vsr.customer_name,
           vsr.customer_address,
           vsr.salesman,
@@ -582,6 +645,7 @@ class SalesReportState extends ChangeNotifier {
         SELECT
           invoice_no,
           invoice_date,
+          $customerCodeExprPlain,
           customer_name,
           customer_address,
           salesman,

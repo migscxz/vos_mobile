@@ -9,6 +9,23 @@ import 'package:vos_mobile/state/data_providers.dart';
 import 'package:vos_mobile/state/delivery_report/delivery_report_state.dart';
 // NEW: Sales Report (Riverpod) providers.
 import 'package:vos_mobile/state/sales_report/sales_report_providers.dart';
+import "package:flutter/material.dart";
+import "package:flutter_riverpod/flutter_riverpod.dart";
+
+// Existing repos + states
+import "package:vos_mobile/state/data_providers.dart";
+import "package:vos_mobile/state/accounts_receivable_state/account_receivable_state.dart";
+import "package:vos_mobile/state/accounts_payable/accounts_payable_state.dart";
+import "package:vos_mobile/state/delivery_report/delivery_report_state.dart";
+
+// Sales Report providers
+import "package:vos_mobile/state/sales_report/sales_report_providers.dart";
+
+// NEW: Disbursement (Riverpod) providers
+import "package:vos_mobile/state/disbursement/disbursement_providers.dart";
+
+// NEW: Inventory (Riverpod) providers
+import 'package:vos_mobile/state/inventory_report/inventory_providers.dart';
 
 class ProfileView extends ConsumerStatefulWidget {
   const ProfileView({super.key});
@@ -22,7 +39,7 @@ class _ProfileViewState extends ConsumerState<ProfileView> {
   String? _progressLabel;
   double? _progressValue; // 0–1, null = indeterminate
 
-  /// ONLY invalidates providers; never runs sync here.
+  /// ONLY refresh/invalidate read models; never runs sync here.
   Future<void> _refreshReadModels() async {
     // ---------------- Delivery Report ----------------
     ref.invalidate(deliveryReportProvider);
@@ -38,7 +55,7 @@ class _ProfileViewState extends ConsumerState<ProfileView> {
     // ---------------- Accounts Receivable -------------
     await ref.read(arNotifierProvider.notifier).refresh();
 
-    // ---------------- Sales Report (NEW) --------------
+    // ---------------- Sales Report --------------------
     ref.invalidate(salesReportRowsProvider); // paged/filtered v_sales_report rows
     ref.invalidate(salesReportMetricsProvider); // totals (sales, collection, returns, discounts)
     ref.invalidate(salesReportFiltersProvider); // current filter state/presets
@@ -51,7 +68,18 @@ class _ProfileViewState extends ConsumerState<ProfileView> {
     ref.invalidate(invoiceTypeDirectoryProvider); // sales_invoice_type endpoint
     ref.invalidate(salesReturnDirectoryProvider); // sales_return endpoint
 
-    // ---------------- Assets & Equipment (OPTIONAL) ---
+    // ---------------- Disbursement Report (NEW) --------
+    //
+    // Your DisbursementView is now driven by the controller/provider.
+    // Invalidating this forces a clean reload from local DB (or API, depending on your repository).
+    ref.invalidate(disbursementControllerProvider);
+
+    // ---------------- Inventory Report (NEW) -----------
+    // Forces a clean reload the next time the InventoryView is opened.
+    // If you later wire InventoryView to auto-load on init, this is enough.
+    ref.invalidate(inventoryReportProvider);
+
+    // ---------------- Assets & Equipment (OPTIONAL) ----
     // If you have Riverpod providers for your assets/equipment views,
     // invalidate them here so they refresh after sync.
     //
@@ -67,7 +95,7 @@ class _ProfileViewState extends ConsumerState<ProfileView> {
 
     setState(() {
       _isSyncing = true;
-      _progressLabel = 'Preparing sync…';
+      _progressLabel = "Preparing sync…";
       _progressValue = 0.0;
     });
 
@@ -79,13 +107,14 @@ class _ProfileViewState extends ConsumerState<ProfileView> {
         await repo.wipeLocal();
       }
 
-      // New: progress-aware sync
+      // Progress-aware sync
       final errors = await repo.syncAllWithProgress(
         purge: true,
         onProgress: (progress) {
           if (!mounted) return;
           setState(() {
             _progressLabel = '(${progress.step}/${progress.total}) ${progress.label}';
+            _progressLabel = "(${progress.step}/${progress.total}) ${progress.label}";
             _progressValue = progress.total == 0 ? null : progress.step / progress.total;
           });
         },
@@ -97,14 +126,23 @@ class _ProfileViewState extends ConsumerState<ProfileView> {
       if (!mounted) return;
 
       final baseMsg = fullReset ? 'Full reseed completed.' : 'Sync completed.';
+      final baseMsg = fullReset ? "Full reseed completed." : "Sync completed.";
       final errorMsg = errors.isEmpty
-          ? ''
-          : ' (${errors.length} task${errors.length == 1 ? '' : 's'} had issues – see logs.)';
+          ? ""
+          : " (${errors.length} task${errors.length == 1 ? "" : "s"} had issues – see logs.)";
 
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$baseMsg$errorMsg')));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Sync failed: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("$baseMsg$errorMsg")),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Sync failed: $e")),
+      );
     } finally {
       if (!mounted) return;
       setState(() {
@@ -138,12 +176,19 @@ class _ProfileViewState extends ConsumerState<ProfileView> {
         children: [
           const CircleAvatar(radius: 36, child: Icon(Icons.person, size: 32)),
           const SizedBox(height: 10),
-          Text('Your Profile', style: theme.textTheme.titleLarge),
+          Text("Your Profile", style: theme.textTheme.titleLarge),
           const SizedBox(height: 4),
           Text('Manage account settings and preferences', style: theme.textTheme.bodySmall),
           const SizedBox(height: 16),
           Tooltip(
             message: 'Tap: normal sync (purge)\nLong-press: full reseed (wipe local cache)',
+          Text(
+            "Manage account settings and preferences",
+            style: theme.textTheme.bodySmall,
+          ),
+          const SizedBox(height: 16),
+          Tooltip(
+            message: "Tap: normal sync (purge)\nLong-press: full reseed (wipe local cache)",
             child: GestureDetector(
               onLongPress: _isSyncing ? null : () => _syncNow(fullReset: true),
               child: FilledButton.icon(
@@ -155,7 +200,7 @@ class _ProfileViewState extends ConsumerState<ProfileView> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.sync),
-                label: Text(_isSyncing ? 'Syncing…' : 'Sync Now'),
+                label: Text(_isSyncing ? "Syncing…" : "Sync Now"),
               ),
             ),
           ),
@@ -176,7 +221,7 @@ class _ProfileViewState extends ConsumerState<ProfileView> {
             SizedBox(width: 260, child: LinearProgressIndicator(value: _progressValue)),
             const SizedBox(height: 8),
             Text(
-              _progressLabel ?? 'Syncing…',
+              _progressLabel ?? "Syncing…",
               style: theme.textTheme.bodySmall,
               textAlign: TextAlign.center,
             ),

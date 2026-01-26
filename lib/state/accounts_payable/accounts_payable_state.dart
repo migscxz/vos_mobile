@@ -9,6 +9,28 @@ import 'package:vos_mobile/data/repository/sync_repository.dart';
 import 'package:vos_mobile/state/data_providers.dart' show syncRepoProvider;
 
 /* -----------------------------------------------------------------------------
+  Money normalization helpers
+  - Because UI shows 2 decimals, anything < 0.005 will display as 0.00.
+  - We treat those tiny values as zero and filter them out from lists.
+----------------------------------------------------------------------------- */
+
+const double _kMoneyEpsilon = 0.005;
+
+double _asDouble(dynamic v) {
+  if (v == null) return 0.0;
+  if (v is num) return v.toDouble();
+  return double.tryParse(v.toString()) ?? 0.0;
+}
+
+double _normalizeMoney(dynamic v) {
+  final d = _asDouble(v);
+  if (d.abs() < _kMoneyEpsilon) return 0.0;
+  return d;
+}
+
+bool _isEffectivelyZero(double v) => v.abs() < _kMoneyEpsilon;
+
+/* -----------------------------------------------------------------------------
   Dependency injection
 ----------------------------------------------------------------------------- */
 
@@ -23,11 +45,11 @@ final syncRepositoryProvider = Provider<SyncRepository>(
 
 class APVendorCard {
   final int payeeId;
-  final String vendor;   // supplier name
-  final double total;    // total outstanding balance
-  final String? due;     // next due date (yyyy-MM-dd) or null
-  final String status;   // Overdue | Due Soon | Not Due | Settled
-  final String remarks;  // sample / earliest remark
+  final String vendor; // supplier name
+  final double total; // total outstanding balance
+  final String? due; // next due date (yyyy-MM-dd) or null
+  final String status; // Overdue | Due Soon | Not Due | Settled
+  final String remarks; // sample / earliest remark
 
   const APVendorCard({
     required this.payeeId,
@@ -50,6 +72,21 @@ class APVendorCard {
       vendor: (r['vendor'] ?? '').toString(),
       total: asDouble(r['total']),
       due: (r['due'] as String?)?.trim().isEmpty == true ? null : r['due'] as String?,
+    final payeeId = (r['payee_id'] as num?)?.toInt() ?? 0;
+    final vendor = (r['vendor'] ?? '').toString().trim();
+
+    final rawTotal = _normalizeMoney(r['total']);
+    // AP should not show negative "balances" as payables; clamp for UI safety.
+    final total = rawTotal < 0 ? 0.0 : rawTotal;
+
+    final rawDue = (r['due'] as String?)?.trim();
+    final due = (rawDue == null || rawDue.isEmpty) ? null : rawDue;
+
+    return APVendorCard(
+      payeeId: payeeId,
+      vendor: vendor,
+      total: total,
+      due: due,
       status: (r['status'] ?? '').toString(),
       remarks: (r['remarks'] ?? '').toString(),
     );
@@ -57,14 +94,14 @@ class APVendorCard {
 }
 
 class APBillItem {
-  final String no;             // doc_no
-  final String? due;           // ISO date
-  final double amount;         // balance for that bill
+  final String no; // doc_no
+  final String? due; // ISO date
+  final double amount; // balance for that bill
   final String remarks;
   final int? primaryCoaId;
   final String? primaryCoaGl;
   final String? primaryCoaTitle;
-  final String? coaList;       // "1000 - Cash | 2xxx - Payable | ..."
+  final String? coaList; // "1000 - Cash | 2xxx - Payable | ..."
 
   const APBillItem({
     required this.no,
@@ -88,6 +125,16 @@ class APBillItem {
       no: (r['no'] ?? '').toString(),
       due: (r['due'] as String?)?.trim().isEmpty == true ? null : r['due'] as String?,
       amount: asDouble(r['amount']),
+    final rawAmount = _normalizeMoney(r['amount']);
+    final amount = rawAmount < 0 ? 0.0 : rawAmount;
+
+    final rawDue = (r['due'] as String?)?.trim();
+    final due = (rawDue == null || rawDue.isEmpty) ? null : rawDue;
+
+    return APBillItem(
+      no: (r['no'] ?? '').toString(),
+      due: due,
+      amount: amount,
       remarks: (r['remarks'] ?? '').toString(),
       primaryCoaId: (r['primary_coa_id'] as num?)?.toInt(),
       primaryCoaGl: r['primary_coa_gl'] as String?,
@@ -209,15 +256,18 @@ class AccountsPayableNotifier extends Notifier<AccountsPayableViewState> {
         // add fromDue/toDue when you wire up date pickers
       );
 
-      final vendors = rows.map(APVendorCard.fromRow).toList();
+      // Map + remove "0.00" vendors (including tiny floating residues)
+      final vendors = rows
+          .map(APVendorCard.fromRow)
+          .where((v) => !_isEffectivelyZero(v.total))
+          .toList();
 
-      // Compute header metrics similar to your APView mock
+      // Compute header metrics using the filtered list
       final totalAP = vendors.fold<double>(0.0, (sum, v) => sum + v.total);
       final overdueAP = vendors
           .where((v) => v.status == 'Overdue')
           .fold<double>(0.0, (sum, v) => sum + v.total);
-      final dueSoonCount =
-          vendors.where((v) => v.status == 'Due Soon').length;
+      final dueSoonCount = vendors.where((v) => v.status == 'Due Soon').length;
 
       state = state.copyWith(
         vendors: vendors,
@@ -243,7 +293,14 @@ class AccountsPayableNotifier extends Notifier<AccountsPayableViewState> {
   /// For the vendor detail bottom sheet in your APView.
   Future<List<APBillItem>> getVendorBillsForUI(int payeeId) async {
     final rows = await _repo.getVendorBillsForUI(payeeId);
-    return rows.map(APBillItem.fromRow).toList();
+
+    // Map + remove "0.00" bills (including tiny floating residues)
+    final bills = rows
+        .map(APBillItem.fromRow)
+        .where((b) => !_isEffectivelyZero(b.amount))
+        .toList();
+
+    return bills;
   }
 }
 

@@ -1,20 +1,28 @@
+library sales_report_view;
+
 // lib/modules/reports/sales_report/sr_view.dart
 
-import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
-import 'package:excel/excel.dart' as xl;
-import 'dart:io';
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
+import "dart:io";
+
+import "package:flutter/material.dart";
+import "package:intl/intl.dart";
+import "package:pdf/pdf.dart";
+import "package:pdf/widgets.dart" as pw;
+import "package:printing/printing.dart";
+import "package:excel/excel.dart" as xl;
+import "package:path_provider/path_provider.dart";
+import "package:share_plus/share_plus.dart";
+
+import "package:sqflite/sqflite.dart";
+import "package:vos_mobile/data/local/app_db.dart";
 
 // ✅ Correct path to your updated state file
-import 'package:vos_mobile/state/sales_report/sales_report_starte.dart';
+import "package:vos_mobile/state/sales_report/sales_report_starte.dart";
 
-import 'package:sqflite/sqflite.dart';
-import 'package:vos_mobile/data/local/app_db.dart';
+part "sr_helpers.dart";
+part "sr_sheets.dart";
+part "sr_exporter.dart";
+part "sr_widgets.dart";
 
 class SalesReportView extends StatefulWidget {
   const SalesReportView({super.key});
@@ -23,18 +31,13 @@ class SalesReportView extends StatefulWidget {
   State<SalesReportView> createState() => _SalesReportViewState();
 }
 
-class _SalesReportViewState extends State<SalesReportView> {
+class _SalesReportViewState extends State<SalesReportView>
+    with
+        DivisionLookupMixin<SalesReportView>,
+        SalesReportSheetsMixin<SalesReportView>,
+        SalesReportExportMixin<SalesReportView> {
   final SalesReportState state = SalesReportState();
   late VoidCallback _sub;
-
-  // ---------- Division name resolver (cached) ----------
-  Map<int, String>? _divisionLookupCache;
-
-  bool _isNumeric(String s) {
-    final t = s.trim();
-    if (t.isEmpty) return false;
-    return int.tryParse(t) != null;
-  }
 
   Future<Database> _db() => AppDb.get();
 
@@ -48,75 +51,6 @@ class _SalesReportViewState extends State<SalesReportView> {
     } catch (_) {
       return <Map<String, Object?>>[];
     }
-  }
-
-  /// Split a quantity into Ties / Boxes / Pieces based on the productUnit string.
-  ({double ties, double boxes, double pieces}) _splitQtyByUnit(
-      num? qty, String? unitRaw) {
-    final q = (qty ?? 0).toDouble();
-    final u = (unitRaw ?? '').toLowerCase().trim();
-    double ties = 0, boxes = 0, pieces = 0;
-
-    if (u.contains('tie')) {
-      ties = q;
-    } else if (u.contains('box')) {
-      boxes = q;
-    } else if (u == 'pc' || u == 'pcs' || u.contains('piece')) {
-      pieces = q;
-    } else {
-      pieces = q;
-    }
-    return (ties: ties, boxes: boxes, pieces: pieces);
-  }
-
-  /// Try several common schemas to build a {id -> name} map for divisions.
-  Future<Map<int, String>> _loadDivisionLookup() async {
-    if (_divisionLookupCache != null) return _divisionLookupCache!;
-
-    final candidates = <({String table, String idCol, String nameCol})>[
-      (table: 'division', idCol: 'id', nameCol: 'name'),
-      (table: 'division', idCol: 'division_id', nameCol: 'division_name'),
-      (table: 'division', idCol: 'id', nameCol: 'division_name'),
-      (table: 'division', idCol: 'division_id', nameCol: 'name'),
-      (table: 'divisions', idCol: 'id', nameCol: 'name'),
-      (table: 'divisions', idCol: 'division_id', nameCol: 'division_name'),
-      (table: 'divisions', idCol: 'id', nameCol: 'division_name'),
-      (table: 'divisions', idCol: 'division_id', nameCol: 'name'),
-      (table: 'salesman_division', idCol: 'id', nameCol: 'name'),
-      (table: 'salesman_division', idCol: 'division_id', nameCol: 'division_name'),
-    ];
-
-    final Map<int, String> out = {};
-    for (final c in candidates) {
-      final rows = await _safeQuery('''
-        SELECT ${c.idCol} AS id, ${c.nameCol} AS name
-        FROM ${c.table}
-        WHERE ${c.idCol} IS NOT NULL
-      ''');
-      if (rows.isNotEmpty) {
-        for (final r in rows) {
-          final id = (r['id'] as num?)?.toInt();
-          final name = (r['name'] ?? '').toString().trim();
-          if (id != null && name.isNotEmpty) {
-            out[id] = name;
-          }
-        }
-        if (out.isNotEmpty) break; // first found mapping wins
-      }
-    }
-
-    _divisionLookupCache = out;
-    return out;
-  }
-
-  /// Prefer textual names; if numeric, try to resolve via lookup; else keep as-is.
-  Future<String?> _resolveDivisionName(String? raw) async {
-    if (raw == null || raw.trim().isEmpty) return null;
-    if (!_isNumeric(raw)) return raw.trim();
-    final id = int.tryParse(raw.trim());
-    if (id == null) return raw.trim();
-    final map = await _loadDivisionLookup();
-    return map[id] ?? raw.trim();
   }
 
   @override
@@ -138,7 +72,7 @@ class _SalesReportViewState extends State<SalesReportView> {
 
   @override
   Widget build(BuildContext context) {
-    final currency = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
+    final currency = NumberFormat.currency(symbol: "₱", decimalDigits: 2);
     final width = MediaQuery.sizeOf(context).width;
     final isTablet = width >= 900;
 
@@ -151,7 +85,7 @@ class _SalesReportViewState extends State<SalesReportView> {
         elevation: 0,
         backgroundColor: Colors.white,
         title: Text(
-          'Sales Report',
+          "Sales Report",
           style: TextStyle(
             color: Colors.black87,
             fontSize: isTablet ? 22 : 20,
@@ -160,14 +94,15 @@ class _SalesReportViewState extends State<SalesReportView> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.filter_list, color: Colors.black87, size: 22),
+            icon:
+            const Icon(Icons.filter_list, color: Colors.black87, size: 22),
             onPressed: () => _showFilterDialog(context),
-            tooltip: 'Filters',
+            tooltip: "Filters",
           ),
           IconButton(
             icon: const Icon(Icons.download, color: Colors.black87, size: 22),
             onPressed: () => _showExportOptions(context),
-            tooltip: 'Export',
+            tooltip: "Export",
           ),
           const SizedBox(width: 8),
         ],
@@ -188,7 +123,7 @@ class _SalesReportViewState extends State<SalesReportView> {
                     SizedBox(
                       width: _metricWidth(c.maxWidth, isTablet),
                       child: _CompactMetricCard(
-                        label: 'Total Sales',
+                        label: "Total Sales",
                         value: currency.format(state.totalSales),
                         icon: Icons.trending_up,
                         color: Colors.blue,
@@ -198,7 +133,7 @@ class _SalesReportViewState extends State<SalesReportView> {
                     SizedBox(
                       width: _metricWidth(c.maxWidth, isTablet),
                       child: _CompactMetricCard(
-                        label: 'Collection',
+                        label: "Collection",
                         value: currency.format(state.totalCollection),
                         icon: Icons.account_balance_wallet,
                         color: Colors.green,
@@ -208,7 +143,7 @@ class _SalesReportViewState extends State<SalesReportView> {
                     SizedBox(
                       width: _metricWidth(c.maxWidth, isTablet),
                       child: _CompactMetricCard(
-                        label: 'Returns',
+                        label: "Returns",
                         value: currency.format(state.totalReturns),
                         icon: Icons.assignment_return,
                         color: Colors.orange,
@@ -218,7 +153,7 @@ class _SalesReportViewState extends State<SalesReportView> {
                     SizedBox(
                       width: _metricWidth(c.maxWidth, isTablet),
                       child: _CompactMetricCard(
-                        label: 'Discounts',
+                        label: "Discounts",
                         value: currency.format(state.totalDiscounts),
                         icon: Icons.discount,
                         color: Colors.purple,
@@ -283,11 +218,12 @@ class _SalesReportViewState extends State<SalesReportView> {
           // Invoice List Header
           Container(
             color: Colors.white,
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: isTablet ? 14 : 12),
+            padding: EdgeInsets.symmetric(
+                horizontal: 16, vertical: isTablet ? 14 : 12),
             child: Row(
               children: [
                 Text(
-                  'Invoice List',
+                  "Invoice List",
                   style: TextStyle(
                     fontWeight: FontWeight.w600,
                     fontSize: isTablet ? 16 : 15,
@@ -305,12 +241,13 @@ class _SalesReportViewState extends State<SalesReportView> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       ),
                       SizedBox(width: 6),
-                      Text('Loading...', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                      Text("Loading...",
+                          style: TextStyle(color: Colors.grey, fontSize: 12)),
                     ],
                   )
                 else
                   Text(
-                    '${visibleRows.length} records',
+                    "${visibleRows.length} records",
                     style: TextStyle(
                       fontSize: isTablet ? 14 : 13,
                       color: Colors.grey,

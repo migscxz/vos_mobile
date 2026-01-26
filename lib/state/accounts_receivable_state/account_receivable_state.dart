@@ -18,11 +18,11 @@ class InvoiceAR {
   final String salesmanName;
   final String salesmanCode;
 
-  final double netAmount;   // total_amount - discount_amount
-  final double paidAmount;  // SUM(payments)
-  final double balance;     // >= 0
-  final DateTime? dueDate;  // from view (computed if null at source)
-  final bool isPosted;      // NEW
+  final double netAmount; // total_amount - discount_amount
+  final double paidAmount; // SUM(payments)
+  final double balance; // >= 0 (normalized to 2 decimals)
+  final DateTime? dueDate; // from view (computed if null at source)
+  final bool isPosted; // NEW
 
   const InvoiceAR({
     required this.invoiceId,
@@ -38,7 +38,19 @@ class InvoiceAR {
     required this.isPosted,
   });
 
-  bool get isOutstanding => balance > 0;
+  // ---- Money normalization (cent-based) ----
+  static int _toCents(double v) {
+    if (!v.isFinite) return 0;
+    return (v * 100).round();
+  }
+
+  static double _fromCents(int cents) => cents / 100.0;
+
+  int get netAmountCents => _toCents(netAmount);
+  int get paidAmountCents => _toCents(paidAmount);
+  int get balanceCents => _toCents(balance);
+
+  bool get isOutstanding => balanceCents > 0;
 
   int get daysOverdue {
     if (dueDate == null) return 0;
@@ -59,11 +71,15 @@ class InvoiceAR {
     return '90+';
   }
 
-  String get uiStatus => (!isOutstanding || daysOverdue <= 0) ? 'Current' : 'Overdue';
+  String get uiStatus =>
+      (!isOutstanding || daysOverdue <= 0) ? 'Current' : 'Overdue';
+
+  // Utility for other classes
+  static double normalize2(double v) => _fromCents(_toCents(v));
 }
 
 class ClientAR {
-  final String client;       // customer_name (fallback to code)
+  final String client; // customer_name (fallback to code)
   final String customerCode;
   final List<InvoiceAR> invoices;
 
@@ -73,10 +89,11 @@ class ClientAR {
     required this.invoices,
   });
 
-  double get total => invoices.fold(0.0, (s, x) => s + x.balance);
+  int get totalCents => invoices.fold(0, (s, x) => s + x.balanceCents);
+  double get total => totalCents / 100.0;
 
-  Map<String, double> get aging {
-    final map = <String, double>{
+  Map<String, int> get agingCents {
+    final map = <String, int>{
       'current': 0,
       '1-30': 0,
       '31-60': 0,
@@ -84,18 +101,32 @@ class ClientAR {
       '90+': 0,
     };
     for (final inv in invoices) {
-      map[inv.agingBucket] = (map[inv.agingBucket] ?? 0) + inv.balance;
+      map[inv.agingBucket] = (map[inv.agingBucket] ?? 0) + inv.balanceCents;
     }
     return map;
   }
 
-  double get overdue => aging.entries
+  Map<String, double> get aging {
+    final cents = agingCents;
+    return <String, double>{
+      'current': (cents['current'] ?? 0) / 100.0,
+      '1-30': (cents['1-30'] ?? 0) / 100.0,
+      '31-60': (cents['31-60'] ?? 0) / 100.0,
+      '61-90': (cents['61-90'] ?? 0) / 100.0,
+      '90+': (cents['90+'] ?? 0) / 100.0,
+    };
+  }
+
+  int get overdueCents => agingCents.entries
       .where((e) => e.key != 'current')
-      .fold(0.0, (s, e) => s + e.value);
+      .fold(0, (s, e) => s + e.value);
+
+  double get overdue => overdueCents / 100.0;
 
   String get status {
-    if (overdue > 0) return 'Overdue';
-    final hasPartial = invoices.any((i) => i.paidAmount > 0 && i.balance > 0);
+    if (overdueCents > 0) return 'Overdue';
+    final hasPartial =
+    invoices.any((i) => i.paidAmountCents > 0 && i.balanceCents > 0);
     if (hasPartial) return 'Partial';
     return 'Current';
   }
@@ -163,6 +194,7 @@ class ARNotifier extends AutoDisposeNotifier<ARState> {
       final db = await AppDb.get();
 
       // NOTE: view_account_receivable now contains: salesman_name, salesman_code, is_posted, due_date, due_date_date
+      // IMPORTANT: Filter out "displayed as 0.00 but actually > 0" by rounding to 2 decimals in SQL.
       final rows = await db.rawQuery('''
         SELECT
           invoice_id,
@@ -179,13 +211,20 @@ class ARNotifier extends AutoDisposeNotifier<ARState> {
           due_date_date,
           is_posted
         FROM view_account_receivable
-        WHERE is_posted = 0            -- ⬅️ only NOT YET POSTED
+        WHERE is_posted = 0
+          AND ROUND(COALESCE(balance, 0), 2) > 0
       ''');
 
       // Map rows -> invoices
       final invoices = <InvoiceAR>[];
       for (final r in rows) {
-        final bal = _asDouble(r['balance']);
+        final rawBal = _asDouble(r['balance']);
+        final bal2 = InvoiceAR.normalize2(rawBal);
+        final safeBal = bal2 < 0 ? 0.0 : bal2;
+
+        final net2 = InvoiceAR.normalize2(_asDouble(r['net_amount']));
+        final paid2 = InvoiceAR.normalize2(_asDouble(r['paid_amount']));
+
         invoices.add(InvoiceAR(
           invoiceId: _asInt(r['invoice_id']),
           invoiceNo: (r['invoice_number'] ?? '').toString(),
@@ -193,27 +232,28 @@ class ARNotifier extends AutoDisposeNotifier<ARState> {
           customerName: _pickName(r['customer_name'], r['customer_code']),
           salesmanName: _pickName(r['salesman_name'], null),
           salesmanCode: (r['salesman_code'] ?? '').toString(),
-          netAmount: _asDouble(r['net_amount']),
-          paidAmount: _asDouble(r['paid_amount']),
-          balance: bal < 0 ? 0 : bal,
+          netAmount: net2,
+          paidAmount: paid2,
+          balance: safeBal,
           // prefer the ISO-only date the view provides (due_date_date) if present
           dueDate: _parseDate(r['due_date_date']) ?? _parseDate(r['due_date']),
           isPosted: _asBool(r['is_posted']),
         ));
       }
 
-      // Group by client; keep only clients with any outstanding balance
+      // Group by client; keep only clients with any outstanding balance (cent-based)
       final byClient = <String, List<InvoiceAR>>{};
       final codeByClient = <String, String>{};
       for (final inv in invoices) {
-        final key = inv.customerName.isNotEmpty ? inv.customerName : inv.customerCode;
+        final key =
+        inv.customerName.isNotEmpty ? inv.customerName : inv.customerCode;
         byClient.putIfAbsent(key, () => []).add(inv);
         codeByClient[key] = inv.customerCode;
       }
 
       final grouped = <ClientAR>[];
       byClient.forEach((client, list) {
-        if (list.any((i) => i.balance > 0)) {
+        if (list.any((i) => i.balanceCents > 0)) {
           grouped.add(ClientAR(
             client: client,
             customerCode: codeByClient[client] ?? '',
@@ -222,7 +262,8 @@ class ARNotifier extends AutoDisposeNotifier<ARState> {
         }
       });
 
-      grouped.sort((a, b) => a.client.toLowerCase().compareTo(b.client.toLowerCase()));
+      grouped.sort(
+              (a, b) => a.client.toLowerCase().compareTo(b.client.toLowerCase()));
 
       state = state.copyWith(
         clients: grouped,
@@ -307,9 +348,11 @@ Map<String, double> agingTotals,
 })>((ref) {
   final clients = ref.watch(arNotifierProvider.select((s) => s.clients));
 
-  double totalAR = 0, totalOverdue = 0;
+  int totalARCents = 0;
+  int totalOverdueCents = 0;
   int overdueCount = 0;
-  final aging = <String, double>{
+
+  final agingCents = <String, int>{
     'current': 0,
     '1-30': 0,
     '31-60': 0,
@@ -318,19 +361,29 @@ Map<String, double> agingTotals,
   };
 
   for (final c in clients) {
-    totalAR += c.total;
-    final od = c.overdue;
-    totalOverdue += od;
-    if (od > 0) overdueCount++;
-    final a = c.aging;
-    for (final k in aging.keys) {
-      aging[k] = (aging[k] ?? 0) + (a[k] ?? 0);
+    totalARCents += c.totalCents;
+
+    final odCents = c.overdueCents;
+    totalOverdueCents += odCents;
+    if (odCents > 0) overdueCount++;
+
+    final a = c.agingCents;
+    for (final k in agingCents.keys) {
+      agingCents[k] = (agingCents[k] ?? 0) + (a[k] ?? 0);
     }
   }
 
+  final aging = <String, double>{
+    'current': (agingCents['current'] ?? 0) / 100.0,
+    '1-30': (agingCents['1-30'] ?? 0) / 100.0,
+    '31-60': (agingCents['31-60'] ?? 0) / 100.0,
+    '61-90': (agingCents['61-90'] ?? 0) / 100.0,
+    '90+': (agingCents['90+'] ?? 0) / 100.0,
+  };
+
   return (
-  totalAR: totalAR,
-  totalOverdue: totalOverdue,
+  totalAR: totalARCents / 100.0,
+  totalOverdue: totalOverdueCents / 100.0,
   overdueClientCount: overdueCount,
   agingTotals: aging,
   );
