@@ -334,7 +334,7 @@ class _ARViewState extends ConsumerState<ARView> {
 
                       // Salesman filter (dropdown)
                       DropdownButtonFormField<String>(
-                        value: _selectedSalesman,
+                        initialValue: _selectedSalesman,
                         decoration: InputDecoration(
                           labelText: 'Filter by salesman',
                           prefixIcon: const Icon(

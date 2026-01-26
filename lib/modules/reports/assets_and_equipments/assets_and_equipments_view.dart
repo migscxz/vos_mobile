@@ -6,7 +6,7 @@ import 'package:getwidget/getwidget.dart';
 import 'package:vos_mobile/state/assets_and_equipments/assets_and_equipments_providers.dart';
 
 class AssetsAndEquipmentsView extends ConsumerStatefulWidget {
-  const AssetsAndEquipmentsView({Key? key}) : super(key: key);
+  const AssetsAndEquipmentsView({super.key});
 
   @override
   ConsumerState<AssetsAndEquipmentsView> createState() =>
@@ -259,6 +259,34 @@ class _AssetsAndEquipmentsViewState
                     }).toList(),
                   ),
                 ),
+                const SizedBox(width: 12),
+                ...depreciationFilters.map((label) {
+                  final isSelected = filters.period.label == label;
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: Text(label),
+                      selected: isSelected,
+                      onSelected: (_) {
+                        final p = DepreciationPeriod.values.firstWhere(
+                              (e) => e.label == label,
+                        );
+                        ref
+                            .read(assetsFiltersProvider.notifier)
+                            .setPeriod(p);
+                      },
+                      selectedColor: Colors.blue,
+                      labelStyle: TextStyle(
+                        color: isSelected ? Colors.white : Colors.black87,
+                        fontWeight: FontWeight.w500,
+                        fontSize: 13,
+                      ),
+                      backgroundColor: Colors.grey[200],
+                      padding:
+                      const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                  );
+                }),
               ],
             ),
           ),

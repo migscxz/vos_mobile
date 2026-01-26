@@ -1,15 +1,14 @@
 // lib/ui/shell/content_area.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../data/models.dart';
-import '../../../state/app_state.dart';
-
+import 'package:vos_mobile/modules/approvals/approval_view.dart';
 // Use your project’s package name or relative paths:
 import 'package:vos_mobile/modules/dashboard/dashboard_view.dart';
-import 'package:vos_mobile/modules/reports/report_view.dart';
-import 'package:vos_mobile/modules/chats/chat_view.dart';
-import 'package:vos_mobile/modules/approvals/approval_view.dart';
 import 'package:vos_mobile/modules/profile/profile_view.dart';
+import 'package:vos_mobile/modules/reports/report_view.dart';
+
+import '../../../data/models.dart';
+import '../../../state/app_state.dart';
 
 class ContentArea extends ConsumerWidget {
   const ContentArea({super.key});
@@ -23,9 +22,9 @@ class ContentArea extends ConsumerWidget {
       case Module.reports:
         return const ReportView();
       case Module.chats:
-        return const ChatView();
+        return const SizedBox.shrink();
       case Module.approvals:
-        return const ApprovalView();
+        return ApprovalView();
       case Module.profile:
         return const ProfileView();
     }

@@ -61,6 +61,17 @@ class APVendorCard {
   });
 
   factory APVendorCard.fromRow(Map<String, Object?> r) {
+    double asDouble(dynamic v) {
+      if (v == null) return 0.0;
+      if (v is num) return v.toDouble();
+      return double.tryParse(v.toString()) ?? 0.0;
+    }
+
+    return APVendorCard(
+      payeeId: (r['payee_id'] as num).toInt(),
+      vendor: (r['vendor'] ?? '').toString(),
+      total: asDouble(r['total']),
+      due: (r['due'] as String?)?.trim().isEmpty == true ? null : r['due'] as String?,
     final payeeId = (r['payee_id'] as num?)?.toInt() ?? 0;
     final vendor = (r['vendor'] ?? '').toString().trim();
 
@@ -104,6 +115,16 @@ class APBillItem {
   });
 
   factory APBillItem.fromRow(Map<String, Object?> r) {
+    double asDouble(dynamic v) {
+      if (v == null) return 0.0;
+      if (v is num) return v.toDouble();
+      return double.tryParse(v.toString()) ?? 0.0;
+    }
+
+    return APBillItem(
+      no: (r['no'] ?? '').toString(),
+      due: (r['due'] as String?)?.trim().isEmpty == true ? null : r['due'] as String?,
+      amount: asDouble(r['amount']),
     final rawAmount = _normalizeMoney(r['amount']);
     final amount = rawAmount < 0 ? 0.0 : rawAmount;
 

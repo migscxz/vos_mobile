@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:vos_mobile/modules/approvals/approvals_panel.dart';
+import 'package:vos_mobile/modules/reports/reports_panel.dart';
+
 import '../../../data/models.dart';
 import '../../../state/app_state.dart';
-import 'package:vos_mobile/modules/reports/reports_panel.dart';
-import 'package:vos_mobile/modules/chats/chats_panel.dart';
-import 'package:vos_mobile/modules/approvals/approvals_panel.dart';
 import 'content_area.dart';
 
 class Shell extends ConsumerWidget {
@@ -12,39 +12,54 @@ class Shell extends ConsumerWidget {
 
   int _indexFor(Module m) {
     switch (m) {
-      case Module.reports: return 0;
-      case Module.chats: return 1;
-      case Module.approvals: return 2;
-      case Module.profile: return 3;
-      case Module.dashboard: return 0; // default to Reports
+      case Module.reports:
+        return 0;
+      case Module.chats:
+        return 0;
+      case Module.approvals:
+        return 1;
+      case Module.profile:
+        return 2;
+      case Module.dashboard:
+        return 0; // default to Reports
     }
   }
 
   Module _moduleFor(int i) {
     switch (i) {
-      case 0: return Module.reports;
-      case 1: return Module.chats;
-      case 2: return Module.approvals;
-      case 3: return Module.profile;
-      default: return Module.reports;
+      case 0:
+        return Module.reports;
+      case 1:
+        return Module.approvals;
+      case 2:
+        return Module.profile;
+      default:
+        return Module.reports;
     }
   }
 
   String _titleFor(Module m) {
     switch (m) {
-      case Module.reports: return 'Reports';
-      case Module.chats: return 'Messages';
-      case Module.approvals: return 'Approvals';
-      case Module.profile: return 'You';
-      case Module.dashboard: return 'VOS';
+      case Module.reports:
+        return 'Reports';
+      case Module.chats:
+        return 'Messages';
+      case Module.approvals:
+        return 'Approvals';
+      case Module.profile:
+        return 'You';
+      case Module.dashboard:
+        return 'VOS';
     }
   }
 
   Widget _panelFor(Module m) {
     switch (m) {
-      case Module.reports: return const ReportsPanel();
-      case Module.chats: return const ChatsPanel();
-      case Module.approvals: return const ApprovalsPanel();
+      case Module.reports:
+        return const ReportsPanel();
+      case Module.approvals:
+        return const ApprovalsPanel();
+      case Module.chats:
       case Module.profile:
       case Module.dashboard:
         return const SizedBox.shrink();
@@ -64,12 +79,8 @@ class Shell extends ConsumerWidget {
     final drawer = Drawer(
       width: sideW,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.only()),
-      child: SafeArea(
-        child: _panelFor(module),
-      ),
+      child: SafeArea(child: _panelFor(module)),
     );
-
-    
 
     return Scaffold(
       // Left drawer for “channels/submodules”
@@ -82,7 +93,10 @@ class Shell extends ConsumerWidget {
             if (wide)
               SizedBox(
                 width: sideW,
-                child: Material(color: Theme.of(context).colorScheme.surface, child: _panelFor(module)),
+                child: Material(
+                  color: Theme.of(context).colorScheme.surface,
+                  child: _panelFor(module),
+                ),
               ),
             // main content + app bar
             Expanded(
@@ -108,7 +122,6 @@ class Shell extends ConsumerWidget {
         onDestinationSelected: (i) => ref.read(moduleProvider.notifier).state = _moduleFor(i),
         destinations: const [
           NavigationDestination(icon: Icon(Icons.bar_chart_rounded), label: 'Reports'),
-          NavigationDestination(icon: Icon(Icons.chat_bubble_outline), label: 'Chats'),
           NavigationDestination(icon: Icon(Icons.verified_outlined), label: 'Approvals'),
           NavigationDestination(icon: Icon(Icons.person_outline), label: 'You'),
         ],

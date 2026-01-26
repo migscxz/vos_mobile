@@ -110,41 +110,45 @@ class AssetRow {
     required this.dateCreated,
   });
 
-  factory AssetRow.fromDb(Map<String, Object?> r) {
-    double _num(Object? v) {
-      if (v == null) return 0.0;
-      if (v is num) return v.toDouble();
-      return double.tryParse(v.toString()) ?? 0.0;
-    }
+factory AssetRow.fromDb(Map<String, Object?> r) {
 
-    int? _intN(Object? v) {
-      if (v == null) return null;
-      if (v is int) return v;
-      if (v is num) return v.toInt();
-      return int.tryParse(v.toString());
-    }
-
-    String _str(Object? v) => (v?.toString() ?? '').trim();
-
-    return AssetRow(
-      id: _intN(r['id']) ?? 0,
-      itemImage: r['item_image']?.toString(),
-      itemType: _str(r['item_type']),
-      quantity: _intN(r['quantity']) ?? 0,
-      rfidCode: r['rfid_code']?.toString(),
-      barcode: r['barcode']?.toString(),
-      department: _str(r['department']),
-      employee: _str(r['employee']),
-      costPerItem: _num(r['cost_per_item']),
-      total: _num(r['total']),
-      condition: _str(r['condition']),
-      lifeSpan: _intN(r['life_span']),
-      depreciationValueYear: _num(r['depreciation_value_year']),
-      encoder: _str(r['encoder']),
-      dateAcquired: r['date_acquired']?.toString(),
-      dateCreated: r['date_created']?.toString(),
-    );
+  double toDouble(dynamic v) {
+    if (v == null) return 0.0;
+    if (v is int) return v.toDouble();
+    if (v is double) return v;
+    return double.tryParse(v.toString()) ?? 0.0;
   }
+
+  int? toInt(dynamic v) {
+    if (v == null) return null;
+    if (v is int) return v;
+    if (v is double) return v.toInt();
+    return int.tryParse(v.toString());
+  }
+
+  String str(dynamic v) => (v?.toString() ?? '').trim();
+
+  return AssetRow(
+    id: toInt(r['id']) ?? 0,
+    itemImage: r['item_image']?.toString(),
+    itemType: str(r['item_type']),
+    quantity: toInt(r['quantity']) ?? 0,
+    rfidCode: r['rfid_code']?.toString(),
+    barcode: r['barcode']?.toString(),
+    department: str(r['department']),
+    employee: str(r['employee']),
+    costPerItem: toDouble(r['cost_per_item']),
+    total: toDouble(r['total']),
+    condition: str(r['condition']),
+    lifeSpan: toInt(r['life_span']),
+    depreciationValueYear: toDouble(r['depreciation_value_year']),
+    encoder: str(r['encoder']),
+    dateAcquired: r['date_acquired']?.toString(),
+    dateCreated: r['date_created']?.toString(),
+  );
+}
+
+
 }
 
 /// Loads ALL rows from local SQLite (view first, fallback to base table)
