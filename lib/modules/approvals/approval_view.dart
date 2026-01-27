@@ -1,6 +1,8 @@
 // lib/modules/approvals/approval_view.dart
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
+import "package:vos_mobile/data/repositories/predispatch_repository.dart";
+import "package:vos_mobile/modules/approvals/predispatch/predispatch_view.dart";
 
 import "../../app.dart";
 import "../../core/auth/user_permissions.dart";
@@ -17,11 +19,10 @@ import "disbursement/disbursement_models.dart";
 import "disbursement/disbursement_view.dart";
 import "dispatch_plan/dispatch_plan_models.dart";
 import "dispatch_plan/dispatch_plan_view.dart";
+import 'leave/leave_view.dart';
 import "overtime/overtime_view.dart";
 import "sales_order/sales_order_view.dart";
 import "stock_transfer/stock_transfer_view.dart";
-import 'leave/leave_view.dart';
-
 
 class ApprovalView extends ConsumerStatefulWidget {
   const ApprovalView({super.key});
@@ -65,6 +66,11 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
   bool _lvLoading = true;
   String? _lvError;
   int _lvPendingCount = 0;
+
+  // Predispatch badge
+  bool _pdLoading = true;
+  String? _pdError;
+  int _pdPendingCount = 0;
 
   @override
   void initState() {
@@ -118,6 +124,9 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
 
       _lvLoading = true;
       _lvError = null;
+
+      _pdLoading = true;
+      _pdError = null;
     });
 
     final api = ref.read(apiClientProvider);
@@ -129,6 +138,7 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
     final dbRepo = DisbursementRepository(api);
     final dpRepo = dp_repo.DispatchPlanRepository(api);
     final atRepo = AttendanceRepository(api);
+    final pdRepo = PredispatchRepository(api);
 
     // Run in parallel, but isolate failures cleanly.
     final stFuture = stRepo.fetchRequestedHeaderCount();
@@ -172,6 +182,9 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
         })
         .catchError((e) => 0);
 
+    // Predispatch: fetch pending count
+    final pdFuture = pdRepo.fetchPendingPredispatchCount();
+
     final results = await Future.wait([
       stFuture.then<Object?>((v) => v).catchError((e) => e),
       soFuture.then<Object?>((v) => v).catchError((e) => e),
@@ -180,6 +193,7 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
       dbFuture.then<Object?>((v) => v).catchError((e) => e),
       dpFuture.then<Object?>((v) => v).catchError((e) => e),
       atFuture.then<Object?>((v) => v).catchError((e) => e),
+      pdFuture.then<Object?>((v) => v).catchError((e) => e),
     ]);
 
     if (!mounted) return;
@@ -268,6 +282,18 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
       _atError = atRes.toString();
     }
 
+    // Predispatch result
+    final pdRes = results[7];
+    if (pdRes is int) {
+      _pdPendingCount = pdRes;
+      _pdLoading = false;
+      _pdError = null;
+    } else {
+      _pdPendingCount = 0;
+      _pdLoading = false;
+      _pdError = pdRes.toString();
+    }
+
     setState(() {});
   }
 
@@ -278,7 +304,8 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
       _lvPendingCount +
       _dbPendingCount +
       _dpPendingCount +
-      _atPendingCount;
+      _atPendingCount +
+      _pdPendingCount;
 
   bool get _hasErrors =>
       _stError != null ||
@@ -287,7 +314,8 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
       _lvError != null ||
       _dbError != null ||
       _dpError != null ||
-      _atError != null;
+      _atError != null ||
+      _pdError != null;
 
   @override
   Widget build(BuildContext context) {
@@ -321,7 +349,8 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                           _otLoading ||
                           _dbLoading ||
                           _dpLoading ||
-                          _atLoading)
+                          _atLoading ||
+                          _pdLoading)
                         Row(
                           children: [
                             SizedBox(
@@ -408,6 +437,8 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                         if (_dpError != null) _InlineError(message: "Dispatch Plan: $_dpError"),
                         if (_dpError != null && _atError != null) const SizedBox(height: 8),
                         if (_atError != null) _InlineError(message: "Attendance: $_atError"),
+                        if (_atError != null && _pdError != null) const SizedBox(height: 8),
+                        if (_pdError != null) _InlineError(message: "Predispatch: $_pdError"),
                       ],
                     ),
                   ),
@@ -520,6 +551,21 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                         Navigator.of(
                           context,
                         ).push(MaterialPageRoute(builder: (_) => const AttendanceApprovalView()));
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    _ApprovalCard(
+                      title: "Predispatch",
+                      subtitle: "Review pending predispatch approvals",
+                      icon: Icons.local_shipping_rounded,
+                      iconColor: const Color(0xFF059669),
+                      iconBackground: const Color(0xFFD1FAE5),
+                      loading: _pdLoading,
+                      badgeCount: _pdPendingCount,
+                      onTap: () {
+                        Navigator.of(
+                          context,
+                        ).push(MaterialPageRoute(builder: (_) => const PredispatchView()));
                       },
                     ),
                   ]),
