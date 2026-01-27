@@ -39,6 +39,7 @@ class PredispatchRepository {
   static const String _salesOrderCollection = "sales_order";
   static const String _branchCollection = "branches";
   static const String _userCollection = "user";
+  static const String _customerCollection = "customer";
 
   // =============================
   // FETCH FLOW (List View)
@@ -154,6 +155,88 @@ class PredispatchRepository {
     return map[dispatchId] ?? [];
   }
 
+  /// Fetch sales orders specifically linked to a dispatch plan via dispatch_plan_details
+  Future<List<PredispatchSalesOrder>> fetchLinkedSalesOrders(int dispatchId) async {
+    final map = await _fetchSalesOrders([dispatchId]);
+    return map[dispatchId] ?? [];
+  }
+
+  /// Fetch all sales orders for the branch of the dispatch plan
+  Future<List<PredispatchSalesOrder>> fetchAllOrdersForDispatchCustomers(int dispatchId) async {
+    try {
+      // First, get the dispatch plan to get the branch_id
+      final res = await _api.getJson(
+        "/items/$_dpCollection/$dispatchId",
+        query: {"fields": "branch_id"},
+      );
+
+      final dispatchData = res["data"];
+      if (dispatchData is! Map) {
+        return [];
+      }
+
+      final branchId = _asInt(dispatchData["branch_id"]);
+      if (branchId == null) {
+        return [];
+      }
+
+      // Fetch all orders for this branch
+      final ordersRes = await _api.getJson(
+        "/items/$_salesOrderCollection",
+        query: {
+          "filter[branch_id][_eq]": branchId.toString(),
+          "fields": "order_id,id,order_no,customer_code,branch_id,allocated_amount,total_amount",
+          "limit": "-1",
+        },
+      );
+
+      final data = (ordersRes["data"] as List?) ?? [];
+
+      // Collect customer codes for lookup
+      final customerCodes = <String>{};
+
+      for (final row in data) {
+        if (row is Map) {
+          final cc = row["customer_code"]?.toString();
+          if (cc != null && cc.isNotEmpty) customerCodes.add(cc);
+        }
+      }
+
+      // Fetch lookups
+      final customersMap = await _fetchCustomersByCodes(customerCodes.toList());
+      final branchesMap = await _fetchBranches([branchId]);
+
+      // Map to domain models
+      final orders = <PredispatchSalesOrder>[];
+      for (final row in data) {
+        if (row is Map) {
+          final cCode = row["customer_code"]?.toString() ?? "";
+          final cName = customersMap[cCode] ?? "Unknown Customer";
+
+          final bName = branchesMap[branchId] ?? "";
+
+          orders.add(
+            PredispatchSalesOrder(
+              orderId: _asInt(row["order_id"]) ?? _asInt(row["id"]) ?? 0,
+              orderNo: row["order_no"]?.toString() ?? "",
+              customerName: cName,
+              customerCode: cCode,
+              branchId: branchId,
+              branchName: bName,
+              totalAmount: double.tryParse(row["total_amount"]?.toString() ?? "0") ?? 0.0,
+              allocatedAmount: double.tryParse(row["allocated_amount"]?.toString() ?? "0") ?? 0.0,
+            ),
+          );
+        }
+      }
+
+      return orders;
+    } catch (e) {
+      debugPrint('Error fetching all orders for dispatch branch: $e');
+      return [];
+    }
+  }
+
   // =============================
   // APPROVE FLOW
   // =============================
@@ -174,7 +257,16 @@ class PredispatchRepository {
       final res = await _api.getJson(
         "/items/$_dpDetailsCollection",
         query: {"filter[dispatch_id][_eq]": dispatchId, "fields": "sales_order_id"},
+        allow403: true,
       );
+
+      // Check if API returned an error (e.g., 403 Forbidden)
+      if (res.containsKey("error")) {
+        return PredispatchApproveOutcome(
+          success: false,
+          error: "Permission denied: Cannot read dispatch_plan_details.",
+        );
+      }
 
       final List data = (res["data"] as List?) ?? [];
       final salesOrderIds = data
@@ -261,6 +353,31 @@ class PredispatchRepository {
     return out;
   }
 
+  Future<Map<String, String>> _fetchCustomersByCodes(List<String> codes) async {
+    if (codes.isEmpty) return {};
+    final uniqueCodes = codes.toSet().toList();
+
+    final res = await _api.getJson(
+      "/items/$_customerCollection",
+      query: {
+        "filter[customer_code][_in]": uniqueCodes.join(","),
+        "fields": "customer_code,customer_name",
+        "limit": "-1",
+      },
+    );
+
+    final data = (res["data"] as List?) ?? [];
+    final out = <String, String>{};
+    for (final r in data) {
+      if (r is Map) {
+        final code = r["customer_code"]?.toString() ?? "";
+        final name = r["customer_name"]?.toString() ?? "";
+        if (code.isNotEmpty) out[code] = name;
+      }
+    }
+    return out;
+  }
+
   Future<Map<int, List<PredispatchSalesOrder>>> _fetchSalesOrders(List<int> dispatchIds) async {
     if (dispatchIds.isEmpty) return {};
 
@@ -270,13 +387,43 @@ class PredispatchRepository {
         query: {
           "filter[dispatch_id][_in]": dispatchIds.join(","),
           "fields":
-              "dispatch_id,sales_order_id.order_id,sales_order_id.id,sales_order_id.order_no,sales_order_id.customer_code,sales_order_id.customer_code.customer_name,sales_order_id.allocated_amount",
+              "dispatch_id,sales_order_id.order_id,sales_order_id.id,sales_order_id.order_no,sales_order_id.customer_code,sales_order_id.allocated_amount,sales_order_id.total_amount,sales_order_id.branch_id",
           "limit": "-1",
         },
+        allow403: true,
       );
+
+      // Check if API returned an error (e.g., 403 Forbidden)
+      if (res.containsKey("error")) {
+        debugPrint(
+          "⚠️ PERMISSION ERROR: User cannot read 'dispatch_plan_details'. Please grant Read access in Directus.",
+        );
+        return {};
+      }
 
       final data = (res["data"] as List?) ?? [];
       final out = <int, List<PredispatchSalesOrder>>{};
+
+      // Collect IDs for manual lookup (safer than deep nesting)
+      final customerCodes = <String>{};
+      final branchIds = <int>{};
+
+      for (final row in data) {
+        if (row is Map) {
+          final so = row["sales_order_id"] as Map?;
+          if (so != null) {
+            final cc = so["customer_code"]?.toString();
+            if (cc != null && cc.isNotEmpty) customerCodes.add(cc);
+
+            final bid = _asInt(so["branch_id"]);
+            if (bid != null) branchIds.add(bid);
+          }
+        }
+      }
+
+      // Fetch Lookups
+      final customersMap = await _fetchCustomersByCodes(customerCodes.toList());
+      final branchesMap = await _fetchBranches(branchIds.toList());
 
       for (final row in data) {
         if (row is Map) {
@@ -286,19 +433,32 @@ class PredispatchRepository {
           final so = row["sales_order_id"] as Map?;
           if (so == null) continue;
 
-          // Handle customer name resolution (Object if joined, String if raw FK)
-          String cName = "";
-          final custRaw = so["customer_code"];
-          if (custRaw is Map) {
-            cName = custRaw["customer_name"]?.toString() ?? "";
-          } else {
-            cName = custRaw?.toString() ?? "";
+          // Resolve Customer
+          String cCode = so["customer_code"]?.toString() ?? "";
+          // If API returned object for customer_code, extract ID
+          if (so["customer_code"] is Map) {
+            cCode = so["customer_code"]["customer_code"]?.toString() ?? "";
           }
+          final cName = customersMap[cCode] ?? "Unknown Customer";
+
+          // Resolve Branch
+          int bId = 0;
+          final branchRaw = so["branch_id"];
+          if (branchRaw is Map) {
+            bId = _asInt(branchRaw["id"]) ?? 0;
+          } else {
+            bId = _asInt(branchRaw) ?? 0;
+          }
+          final bName = branchesMap[bId] ?? "";
 
           final order = PredispatchSalesOrder(
             orderId: _asInt(so["order_id"]) ?? _asInt(so["id"]) ?? 0,
             orderNo: so["order_no"]?.toString() ?? "",
             customerName: cName,
+            customerCode: cCode,
+            branchId: bId,
+            branchName: bName,
+            totalAmount: double.tryParse(so["total_amount"]?.toString() ?? "0") ?? 0.0,
             allocatedAmount: double.tryParse(so["allocated_amount"]?.toString() ?? "0") ?? 0.0,
           );
 

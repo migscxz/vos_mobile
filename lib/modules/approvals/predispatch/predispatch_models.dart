@@ -47,12 +47,20 @@ class PredispatchSalesOrder {
   final int orderId;
   final String orderNo;
   final String customerName;
+  final String customerCode;
+  final int branchId;
+  final String? branchName;
+  final double totalAmount;
   final double allocatedAmount;
 
   const PredispatchSalesOrder({
     required this.orderId,
     required this.orderNo,
     required this.customerName,
+    required this.customerCode,
+    required this.branchId,
+    this.branchName,
+    required this.totalAmount,
     required this.allocatedAmount,
   });
 }

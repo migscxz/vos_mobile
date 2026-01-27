@@ -1,4 +1,3 @@
-
 import "package:dio/dio.dart";
 
 class ApiClient {
@@ -7,10 +6,7 @@ class ApiClient {
 
   ApiClient._(this._dio, this.baseUrl);
 
-  factory ApiClient({
-    String baseUrl = "http://goatedcodoer:8056",
-    String? token,
-  }) {
+  factory ApiClient({String baseUrl = "http://goatedcodoer:8056", String? token}) {
     final dio = Dio(
       BaseOptions(
         baseUrl: baseUrl,
@@ -19,8 +15,7 @@ class ApiClient {
         headers: {
           "Accept": "application/json",
           "Content-Type": "application/json",
-          if (token != null && token.trim().isNotEmpty)
-            "Authorization": "Bearer ${token.trim()}",
+          if (token != null && token.trim().isNotEmpty) "Authorization": "Bearer ${token.trim()}",
         },
         // IMPORTANT:
         // Let Dio return ALL status codes so we can read res.data (including 500 bodies).
@@ -44,12 +39,16 @@ class ApiClient {
   Future<Map<String, dynamic>> getJson(
     String path, {
     Map<String, dynamic>? query,
+    bool allow403 = false,
   }) async {
     try {
       final res = await _dio.get(path, queryParameters: query);
       // ignore: avoid_print
       print("GET $baseUrl$path → status: ${res.statusCode}");
 
+      if (allow403 && res.statusCode == 403) {
+        return {"error": "403 Forbidden – Check token or permissions.", "data": res.data};
+      }
       if (res.statusCode == 401) {
         throw Exception("401 Unauthorized – Invalid credentials or token expired.");
       }
@@ -57,9 +56,7 @@ class ApiClient {
         throw Exception("403 Forbidden – Check token or permissions.");
       }
       if (res.statusCode == null || res.statusCode! >= 400) {
-        throw Exception(
-          "HTTP ${res.statusCode} – ${res.statusMessage} – ${res.data}",
-        );
+        throw Exception("HTTP ${res.statusCode} – ${res.statusMessage} – ${res.data}");
       }
 
       if (res.data is Map) {
@@ -85,10 +82,7 @@ class ApiClient {
     }
   }
 
-  Future<List<dynamic>> getList(
-    String path, {
-    Map<String, dynamic>? query,
-  }) async {
+  Future<List<dynamic>> getList(String path, {Map<String, dynamic>? query}) async {
     try {
       final res = await _dio.get(path, queryParameters: query);
       // ignore: avoid_print
@@ -101,9 +95,7 @@ class ApiClient {
         throw Exception("403 Forbidden – Check token or permissions.");
       }
       if (res.statusCode == null || res.statusCode! >= 400) {
-        throw Exception(
-          "HTTP ${res.statusCode} – ${res.statusMessage} – ${res.data}",
-        );
+        throw Exception("HTTP ${res.statusCode} – ${res.statusMessage} – ${res.data}");
       }
 
       if (res.data is Map && (res.data as Map)["data"] is List) {
@@ -149,9 +141,7 @@ class ApiClient {
         throw Exception("403 Forbidden – Check token or permissions.");
       }
       if (res.statusCode == null || res.statusCode! >= 400) {
-        throw Exception(
-          "HTTP ${res.statusCode} – ${res.statusMessage} – ${res.data}",
-        );
+        throw Exception("HTTP ${res.statusCode} – ${res.statusMessage} – ${res.data}");
       }
 
       if (res.data is Map) {
@@ -194,9 +184,7 @@ class ApiClient {
         throw Exception("403 Forbidden – Check token or permissions.");
       }
       if (res.statusCode == null || res.statusCode! >= 400) {
-        throw Exception(
-          "HTTP ${res.statusCode} – ${res.statusMessage} – ${res.data}",
-        );
+        throw Exception("HTTP ${res.statusCode} – ${res.statusMessage} – ${res.data}");
       }
 
       if (res.data is Map) {
@@ -222,20 +210,14 @@ class ApiClient {
     }
   }
 
-  Future<Map<String, dynamic>> patch(
-    String path, {
-    required Map<String, dynamic> data,
-  }) async {
+  Future<Map<String, dynamic>> patch(String path, {required Map<String, dynamic> data}) async {
     final res = await patchJson(path, body: data);
     final d = res["data"];
     if (d is Map) return Map<String, dynamic>.from(d);
     return res; // Return the full response if data is not a map
   }
 
-  Future<void> deleteJson(
-    String path, {
-    Map<String, dynamic>? query,
-  }) async {
+  Future<void> deleteJson(String path, {Map<String, dynamic>? query}) async {
     try {
       final res = await _dio.delete(path, queryParameters: query);
       // ignore: avoid_print
@@ -248,9 +230,7 @@ class ApiClient {
         throw Exception("403 Forbidden – Check token or permissions.");
       }
       if (res.statusCode == null || res.statusCode! >= 400) {
-        throw Exception(
-          "HTTP ${res.statusCode} – ${res.statusMessage} – ${res.data}",
-        );
+        throw Exception("HTTP ${res.statusCode} – ${res.statusMessage} – ${res.data}");
       }
     } on DioException catch (e) {
       // ignore: avoid_print

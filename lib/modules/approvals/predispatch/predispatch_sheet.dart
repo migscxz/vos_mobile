@@ -22,10 +22,6 @@ class _PredispatchApprovalSheetState extends ConsumerState<PredispatchApprovalSh
   String? _error;
   String _remarks = "";
 
-  // Lazy loaded data
-  List<PredispatchSalesOrder> _salesOrders = [];
-  bool _loadingOrders = true;
-
   // Controllers
   late final PredispatchRepository _repo;
   final TextEditingController _remarksCtrl = TextEditingController();
@@ -34,21 +30,6 @@ class _PredispatchApprovalSheetState extends ConsumerState<PredispatchApprovalSh
   void initState() {
     super.initState();
     _repo = PredispatchRepository(ref.read(apiClientProvider));
-    _loadOrders();
-  }
-
-  Future<void> _loadOrders() async {
-    try {
-      final orders = await _repo.fetchSalesOrders(widget.header.dispatchId);
-      if (mounted) {
-        setState(() {
-          _salesOrders = orders;
-          _loadingOrders = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) setState(() => _loadingOrders = false);
-    }
   }
 
   @override
@@ -90,6 +71,8 @@ class _PredispatchApprovalSheetState extends ConsumerState<PredispatchApprovalSh
     final header = widget.header;
     final statusColor = getPredispatchStatusColor(header.status, cs);
     final currencyFmt = NumberFormat.currency(symbol: "₱", decimalDigits: 2);
+
+    // No sales orders to display
 
     return DraggableScrollableSheet(
       initialChildSize: 0.85,
@@ -219,44 +202,6 @@ class _PredispatchApprovalSheetState extends ConsumerState<PredispatchApprovalSh
 
                     const SizedBox(height: 24),
 
-                    // SALES ORDERS LIST
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          "Sales Orders",
-                          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
-                        ),
-                        if (!_loadingOrders)
-                          Text(
-                            "${_salesOrders.length} Orders",
-                            style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-
-                    if (_loadingOrders)
-                      const Center(
-                        child: Padding(
-                          padding: EdgeInsets.all(24.0),
-                          child: CircularProgressIndicator(),
-                        ),
-                      )
-                    else if (_salesOrders.isEmpty)
-                      Container(
-                        padding: const EdgeInsets.all(24),
-                        alignment: Alignment.center,
-                        child: Text(
-                          "No sales orders found in this dispatch.",
-                          style: TextStyle(color: cs.onSurfaceVariant),
-                        ),
-                      )
-                    else
-                      ..._salesOrders.map((order) => _SalesOrderRow(order: order)),
-
-                    const SizedBox(height: 24),
-
                     // REMARKS INPUT
                     Text(
                       "Approval Remarks (Optional)",
@@ -294,81 +239,6 @@ class _PredispatchApprovalSheetState extends ConsumerState<PredispatchApprovalSh
           ),
         );
       },
-    );
-  }
-}
-
-// ==============================================================================
-// PRIVATE HELPER COMPONENTS
-// ==============================================================================
-
-class _SalesOrderRow extends StatelessWidget {
-  final PredispatchSalesOrder order;
-  const _SalesOrderRow({required this.order});
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final currencyFmt = NumberFormat.currency(symbol: "₱", decimalDigits: 2);
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: cs.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: cs.outlineVariant.withOpacity(0.3)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: cs.primaryContainer.withOpacity(0.4),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(Icons.receipt_long, size: 20, color: cs.onPrimaryContainer),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  order.orderNo,
-                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                Text(
-                  order.customerName,
-                  style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                currencyFmt.format(order.allocatedAmount),
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: cs.primary),
-              ),
-              Text(
-                "Allocated",
-                style: TextStyle(
-                  fontSize: 10,
-                  color: cs.onSurfaceVariant,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
     );
   }
 }
