@@ -26,6 +26,8 @@ import "stock_transfer/stock_transfer_view.dart";
 import "invoice_cancellation/invoice_cancellation_view.dart";
 // import "invoice_cancellation/invoice_cancellation_models.dart"; // for filter enum if needed
 import "../../data/repositories/invoice_cancellation_repository.dart";
+import "../../data/repositories/price_change_repository.dart";
+import "price_change/price_change_view.dart";
 
 class ApprovalView extends ConsumerStatefulWidget {
   const ApprovalView({super.key});
@@ -77,8 +79,13 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
 
   // Invoice Cancellation badge
   bool _icLoading = true;
-  String? _icError;
+  String? _icError = null;
   int _icPendingCount = 0;
+
+  // Price Change badge
+  bool _pcLoading = true;
+  String? _pcError = null;
+  int _pcPendingCount = 0;
 
   @override
   void initState() {
@@ -138,6 +145,9 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
 
       _icLoading = true;
       _icError = null;
+
+      _pcLoading = true;
+      _pcError = null;
     });
 
     final api = ref.read(apiClientProvider);
@@ -151,6 +161,7 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
     final atRepo = AttendanceRepository(api);
     final pdRepo = PredispatchRepository(api);
     final icRepo = InvoiceCancellationRepository(api);
+    final pcRepo = PriceChangeRepository(api);
 
     // Run in parallel, but isolate failures cleanly.
     final stFuture = stRepo.fetchRequestedHeaderCount();
@@ -206,6 +217,9 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
       status: "PENDING",
     ); // assuming PENDING is the status value
 
+    // Price Change: fetch pending count
+    final pcFuture = pcRepo.fetchCount(status: "PENDING");
+
     final results = await Future.wait([
       stFuture.then<Object?>((v) => v).catchError((e) => e),
       soFuture.then<Object?>((v) => v).catchError((e) => e),
@@ -216,6 +230,7 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
       atFuture.then<Object?>((v) => v).catchError((e) => e),
       pdFuture.then<Object?>((v) => v).catchError((e) => e),
       icFuture.then<Object?>((v) => v).catchError((e) => e),
+      pcFuture.then<Object?>((v) => v).catchError((e) => e),
     ]);
 
     if (!mounted) return;
@@ -328,6 +343,18 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
       _icError = icRes.toString();
     }
 
+    // Price Change result
+    final pcRes = results[9];
+    if (pcRes is int) {
+      _pcPendingCount = pcRes;
+      _pcLoading = false;
+      _pcError = null;
+    } else {
+      _pcPendingCount = 0;
+      _pcLoading = false;
+      _pcError = pcRes.toString();
+    }
+
     setState(() {});
   }
 
@@ -340,7 +367,8 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
       _dpPendingCount +
       _atPendingCount +
       _pdPendingCount +
-      _icPendingCount;
+      _icPendingCount +
+      _pcPendingCount;
 
   bool get _hasErrors =>
       _stError != null ||
@@ -352,7 +380,8 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
       _atError != null ||
       _atError != null ||
       _pdError != null ||
-      _icError != null;
+      _icError != null ||
+      _pcError != null;
 
   @override
   Widget build(BuildContext context) {
@@ -389,7 +418,8 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                           _atLoading ||
                           _atLoading ||
                           _pdLoading ||
-                          _icLoading)
+                          _icLoading ||
+                          _pcLoading)
                         Row(
                           children: [
                             SizedBox(
@@ -507,6 +537,10 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                           _InlineError(
                             message: "Invoice Cancellation: $_icError",
                           ),
+                        if (_icError != null && _pcError != null)
+                          const SizedBox(height: 8),
+                        if (_pcError != null)
+                          _InlineError(message: "Price Change: $_pcError"),
                       ],
                     ),
                   ),
@@ -666,6 +700,23 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                           MaterialPageRoute(
                             builder: (_) =>
                                 const InvoiceCancellationApprovalView(),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    _ApprovalCard(
+                      title: "Price Change",
+                      subtitle: "Review price modification requests",
+                      icon: Icons.sell_rounded,
+                      iconColor: const Color(0xFFF97316),
+                      iconBackground: const Color(0xFFFFF7ED),
+                      loading: _pcLoading,
+                      badgeCount: _pcPendingCount,
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const PriceChangeApprovalView(),
                           ),
                         );
                       },
