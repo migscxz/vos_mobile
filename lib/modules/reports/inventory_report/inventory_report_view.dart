@@ -272,24 +272,27 @@ class _InventoryViewState extends ConsumerState<InventoryView>
           ),
         ),
       ),
-      body: Column(
-        children: [
-          _buildFilterSection(),
-          Expanded(
-            child: report.loading
-                ? const Center(child: CircularProgressIndicator())
-                : report.error != null
-                ? _buildErrorState(report.error!)
-                : TabBarView(
-              controller: _tabController,
-              children: [
-                _buildOverviewTab(),
-                _buildMovementsTab(),
-                _buildAnalyticsTab(),
-              ],
+      body: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            _buildFilterSection(),
+            Expanded(
+              child: report.loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : report.error != null
+                  ? _buildErrorState(report.error!)
+                  : TabBarView(
+                controller: _tabController,
+                children: [
+                  _buildOverviewTab(),
+                  _buildMovementsTab(),
+                  _buildAnalyticsTab(),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -457,15 +460,31 @@ class _InventoryViewState extends ConsumerState<InventoryView>
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, size: 16, color: Colors.grey[600]),
-          const SizedBox(width: 4),
-          DropdownButton<String>(
-            value: safeValue,
-            underline: const SizedBox(),
-            items: items
-                .map((item) => DropdownMenuItem(value: item, child: Text(item)))
-                .toList(),
-            onChanged: onChanged,
-            style: const TextStyle(fontSize: 13, color: Colors.black87),
+          const SizedBox(width: 6),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 220),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                value: safeValue,
+                isDense: true,
+                isExpanded: true,
+                menuMaxHeight: 360,
+                items: items
+                    .map(
+                      (item) => DropdownMenuItem(
+                    value: item,
+                    child: Text(
+                      item,
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                    ),
+                  ),
+                )
+                    .toList(),
+                onChanged: onChanged,
+                style: const TextStyle(fontSize: 13, color: Colors.black87),
+              ),
+            ),
           ),
         ],
       ),
@@ -479,87 +498,40 @@ class _InventoryViewState extends ConsumerState<InventoryView>
   Widget _buildOverviewTab() {
     final stats = _computeStats(_filteredRows);
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: _buildMetricCard(
-                  "Running Inventory",
-                  _fmtNumber(stats.totalRunning),
-                  "base qty",
-                  Colors.blue,
-                  Icons.inventory_2,
-                  "Rows: ${stats.rowCount}",
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildMetricCard(
-                  "Movement After",
-                  _fmtSigned(stats.totalMovementAfter),
-                  "net since cutoff",
-                  stats.totalMovementAfter >= 0 ? Colors.green : Colors.red,
-                  Icons.compare_arrows,
-                  "Cutoffs: ${stats.distinctCutoffs}",
-                ),
-              ),
-            ],
+    // ✅ Single scroll view (Slivers) => no nested scroll overflow
+    return CustomScrollView(
+      physics: const BouncingScrollPhysics(),
+      slivers: [
+        SliverPadding(
+          padding: const EdgeInsets.all(16),
+          sliver: SliverToBoxAdapter(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildMetricsGrid(stats),
+                const SizedBox(height: 24),
+                _buildSectionHeader("Running Inventory Rows"),
+                const SizedBox(height: 12),
+              ],
+            ),
           ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: _buildMetricCard(
-                  "Last Count",
-                  _fmtNumber(stats.totalLastCount),
-                  "base qty",
-                  Colors.purple,
-                  Icons.fact_check,
-                  "Products: ${stats.distinctProducts}",
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildMetricCard(
-                  "Latest Cutoff",
-                  stats.latestCutoff == null
-                      ? "-"
-                      : DateFormat("MMM dd, yyyy").format(stats.latestCutoff!),
-                  "date",
-                  Colors.orange,
-                  Icons.calendar_month,
-                  stats.latestCutoff == null
-                      ? "-"
-                      : "Earliest: ${DateFormat("MMM dd").format(stats.earliestCutoff!)}",
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-          _buildSectionHeader("Running Inventory Rows"),
-          const SizedBox(height: 12),
-
-          // ✅ HUGE PERF FIX: lazy list instead of Column(map(...))
-          if (_filteredRows.isEmpty)
-            _buildEmptyState()
-          else
-            SizedBox(
-              // keeps the scroll from fighting with the outer SingleChildScrollView
-              height: MediaQuery.of(context).size.height * 0.62,
-              child: ListView.builder(
-                physics: const BouncingScrollPhysics(),
-                itemCount: _filteredRows.length,
-                itemBuilder: (context, index) {
-                  return _buildRunningInventoryCard(_filteredRows[index]);
-                },
+        ),
+        if (_filteredRows.isEmpty)
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            sliver: SliverToBoxAdapter(child: _buildEmptyState()),
+          )
+        else
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            sliver: SliverList(
+              delegate: SliverChildBuilderDelegate(
+                    (context, index) => _buildRunningInventoryCard(_filteredRows[index]),
+                childCount: _filteredRows.length,
               ),
             ),
-        ],
-      ),
+          ),
+      ],
     );
   }
 
@@ -572,14 +544,19 @@ class _InventoryViewState extends ConsumerState<InventoryView>
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                "Movement After Cutoff",
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black87,
+              const Expanded(
+                child: Text(
+                  "Movement After Cutoff",
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                  ),
                 ),
               ),
+              const SizedBox(width: 12),
               GFButton(
                 onPressed: _exportData,
                 text: "Export",
@@ -606,17 +583,13 @@ class _InventoryViewState extends ConsumerState<InventoryView>
     );
   }
 
-  // ✅ Lightweight top-N helper: avoids sorting huge lists repeatedly
+  // ✅ Lightweight top-N helper
   List<RunningInventoryRow> _topN(
       List<RunningInventoryRow> rows,
       int n,
       int Function(RunningInventoryRow a, RunningInventoryRow b) compare,
       ) {
-    if (rows.isEmpty) return const [];
-    if (rows.length <= n) {
-      final out = [...rows]..sort(compare);
-      return out;
-    }
+    if (rows.isEmpty) return <RunningInventoryRow>[];
     final out = [...rows]..sort(compare);
     return out.take(n).toList();
   }
@@ -646,13 +619,15 @@ class _InventoryViewState extends ConsumerState<InventoryView>
           else
             Column(
               children: topRunningTake
-                  .map((r) => _buildTopRowCard(
-                title: r.productName,
-                subtitle: "${r.branchName} • ${r.productCode}",
-                trailing: _fmtNumber(r.runningInventory),
-                trailingLabel: "run inv",
-                color: Colors.blue,
-              ))
+                  .map(
+                    (r) => _buildTopRowCard(
+                  title: r.productName,
+                  subtitle: "${r.branchName} • ${r.productCode}",
+                  trailing: _fmtNumber(r.runningInventory),
+                  trailingLabel: "run inv",
+                  color: Colors.blue,
+                ),
+              )
                   .toList(),
             ),
           const SizedBox(height: 24),
@@ -714,110 +689,275 @@ class _InventoryViewState extends ConsumerState<InventoryView>
       elevation: 1,
       content: InkWell(
         onTap: () => _showRunningInventoryDetails(r),
-        child: Padding(
-          padding: const EdgeInsets.all(4),
-          child: Row(
-            children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: movementColor.withOpacity(0.10),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(
-                  r.movementAfter >= 0
-                      ? Icons.arrow_downward
-                      : Icons.arrow_upward,
-                  color: movementColor,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final narrow = constraints.maxWidth < 420;
+
+            if (narrow) {
+              // ✅ Mobile-friendly stacked layout
+              return Padding(
+                padding: const EdgeInsets.all(10),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      r.productName,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 14,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    Row(
+                      children: [
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: movementColor.withOpacity(0.10),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Icon(
+                            r.movementAfter >= 0
+                                ? Icons.arrow_downward
+                                : Icons.arrow_upward,
+                            color: movementColor,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                r.productName,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 14,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                "${r.productCode} • ${r.branchName}",
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey[600],
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                supplierLabel,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey[600],
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                        Icon(Icons.chevron_right, color: Colors.grey[400]),
+                      ],
                     ),
-                    const SizedBox(height: 3),
-                    Text(
-                      "${r.productCode} • ${r.branchName} • $supplierLabel",
-                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        _miniPill(
+                          label: "Run: ${_fmtNumber(r.runningInventory)}",
+                          color: Colors.blue,
+                        ),
+                        _miniPill(
+                          label: "Last: ${_fmtNumber(r.lastCount)}",
+                          color: Colors.purple,
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: movementColor.withOpacity(0.10),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: movementColor.withOpacity(0.25),
+                            ),
+                          ),
+                          child: Text(
+                            "Δ ${_fmtSigned(r.movementAfter)}",
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: movementColor,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 10),
                     Row(
                       children: [
                         Icon(Icons.straighten,
                             size: 12, color: Colors.grey[500]),
                         const SizedBox(width: 4),
-                        Text(
-                          "${r.unitName} (x${r.unitCount})",
-                          style:
-                          TextStyle(fontSize: 11, color: Colors.grey[500]),
+                        Expanded(
+                          child: Text(
+                            "${r.unitName} (x${r.unitCount})",
+                            style:
+                            TextStyle(fontSize: 11, color: Colors.grey[500]),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: 10),
                         Icon(Icons.calendar_today,
                             size: 12, color: Colors.grey[500]),
                         const SizedBox(width: 4),
-                        Text(
-                          "Cutoff: ${r.lastCutoff.millisecondsSinceEpoch == 0 ? "-" : DateFormat("MMM dd, yyyy").format(r.lastCutoff)}",
-                          style:
-                          TextStyle(fontSize: 11, color: Colors.grey[500]),
+                        Expanded(
+                          child: Text(
+                            "Cutoff: ${r.lastCutoff.millisecondsSinceEpoch == 0 ? "-" : DateFormat("MMM dd, yyyy").format(r.lastCutoff)}",
+                            style:
+                            TextStyle(fontSize: 11, color: Colors.grey[500]),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                       ],
                     ),
                   ],
                 ),
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
+              );
+            }
+
+            // ✅ Wider layout (tablet / large phones)
+            return Padding(
+              padding: const EdgeInsets.all(4),
+              child: Row(
                 children: [
-                  Text(
-                    _fmtNumber(r.runningInventory),
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                      color: Colors.black87,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    "run inv (base)",
-                    style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-                  ),
-                  const SizedBox(height: 6),
                   Container(
-                    padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    width: 48,
+                    height: 48,
                     decoration: BoxDecoration(
                       color: movementColor.withOpacity(0.10),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: movementColor.withOpacity(0.25)),
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                    child: Text(
-                      "Δ ${_fmtSigned(r.movementAfter)}",
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: movementColor,
-                      ),
+                    child: Icon(
+                      r.movementAfter >= 0
+                          ? Icons.arrow_downward
+                          : Icons.arrow_upward,
+                      color: movementColor,
                     ),
                   ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          r.productName,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          "${r.productCode} • ${r.branchName} • $supplierLabel",
+                          style:
+                          TextStyle(fontSize: 12, color: Colors.grey[600]),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            Icon(Icons.straighten,
+                                size: 12, color: Colors.grey[500]),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(
+                                "${r.unitName} (x${r.unitCount})",
+                                style: TextStyle(
+                                    fontSize: 11, color: Colors.grey[500]),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Icon(Icons.calendar_today,
+                                size: 12, color: Colors.grey[500]),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(
+                                "Cutoff: ${r.lastCutoff.millisecondsSinceEpoch == 0 ? "-" : DateFormat("MMM dd, yyyy").format(r.lastCutoff)}",
+                                style: TextStyle(
+                                    fontSize: 11, color: Colors.grey[500]),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(minWidth: 90, maxWidth: 120),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerRight,
+                          child: Text(
+                            _fmtNumber(r.runningInventory),
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                              color: Colors.black87,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          "run inv (base)",
+                          style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: movementColor.withOpacity(0.10),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: movementColor.withOpacity(0.25),
+                            ),
+                          ),
+                          child: Text(
+                            "Δ ${_fmtSigned(r.movementAfter)}",
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: movementColor,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Icon(Icons.chevron_right, color: Colors.grey[400]),
                 ],
               ),
-              const SizedBox(width: 8),
-              Icon(Icons.chevron_right, color: Colors.grey[400]),
-            ],
-          ),
+            );
+          },
         ),
       ),
     );
@@ -831,72 +971,164 @@ class _InventoryViewState extends ConsumerState<InventoryView>
       elevation: 1,
       content: InkWell(
         onTap: () => _showRunningInventoryDetails(r),
-        child: Padding(
-          padding: const EdgeInsets.all(6),
-          child: Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: movementColor.withOpacity(0.10),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(Icons.compare_arrows, color: movementColor),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final narrow = constraints.maxWidth < 400;
+
+            if (narrow) {
+              return Padding(
+                padding: const EdgeInsets.all(10),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      r.productName,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      "${r.branchName} • Cutoff ${r.lastCutoff.millisecondsSinceEpoch == 0 ? "-" : DateFormat("MMM dd, yyyy").format(r.lastCutoff)}",
-                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 6),
                     Row(
                       children: [
-                        _miniPill(
-                            label: "Last: ${_fmtNumber(r.lastCount)}",
-                            color: Colors.purple),
+                        Container(
+                          width: 42,
+                          height: 42,
+                          decoration: BoxDecoration(
+                            color: movementColor.withOpacity(0.10),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Icon(Icons.compare_arrows, color: movementColor),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                r.productName,
+                                style:
+                                const TextStyle(fontWeight: FontWeight.w700),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                "${r.branchName} • Cutoff ${r.lastCutoff.millisecondsSinceEpoch == 0 ? "-" : DateFormat("MMM dd, yyyy").format(r.lastCutoff)}",
+                                style: TextStyle(
+                                    fontSize: 12, color: Colors.grey[600]),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
                         const SizedBox(width: 8),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                _fmtSigned(r.movementAfter),
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 16,
+                                  color: movementColor,
+                                ),
+                              ),
+                            ),
+                            Text(
+                              "movement",
+                              style:
+                              TextStyle(fontSize: 11, color: Colors.grey[500]),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
                         _miniPill(
-                            label: "Run: ${_fmtNumber(r.runningInventory)}",
-                            color: Colors.blue),
+                          label: "Last: ${_fmtNumber(r.lastCount)}",
+                          color: Colors.purple,
+                        ),
+                        _miniPill(
+                          label: "Run: ${_fmtNumber(r.runningInventory)}",
+                          color: Colors.blue,
+                        ),
                       ],
                     ),
                   ],
                 ),
-              ),
-              const SizedBox(width: 8),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
+              );
+            }
+
+            return Padding(
+              padding: const EdgeInsets.all(6),
+              child: Row(
                 children: [
-                  Text(
-                    _fmtSigned(r.movementAfter),
-                    style: TextStyle(
-                      fontWeight: FontWeight.w900,
-                      fontSize: 16,
-                      color: movementColor,
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: movementColor.withOpacity(0.10),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(Icons.compare_arrows, color: movementColor),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          r.productName,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          "${r.branchName} • Cutoff ${r.lastCutoff.millisecondsSinceEpoch == 0 ? "-" : DateFormat("MMM dd, yyyy").format(r.lastCutoff)}",
+                          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            _miniPill(
+                              label: "Last: ${_fmtNumber(r.lastCount)}",
+                              color: Colors.purple,
+                            ),
+                            const SizedBox(width: 8),
+                            _miniPill(
+                              label: "Run: ${_fmtNumber(r.runningInventory)}",
+                              color: Colors.blue,
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
-                  Text(
-                    "movement",
-                    style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                  const SizedBox(width: 8),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        _fmtSigned(r.movementAfter),
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 16,
+                          color: movementColor,
+                        ),
+                      ),
+                      Text(
+                        "movement",
+                        style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                      ),
+                    ],
                   ),
                 ],
               ),
-            ],
-          ),
+            );
+          },
         ),
       ),
     );
@@ -917,7 +1149,69 @@ class _InventoryViewState extends ConsumerState<InventoryView>
           fontWeight: FontWeight.w700,
           color: color,
         ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
       ),
+    );
+  }
+
+  Widget _buildMetricsGrid(RunningStats stats) {
+    // ✅ Responsive grid: 1 col (small), 2 cols (phone+), 4 cols (tablet)
+    return LayoutBuilder(
+      builder: (context, c) {
+        final w = c.maxWidth;
+        final cols = w >= 900 ? 4 : (w >= 560 ? 2 : 1);
+        const gap = 12.0;
+
+        final itemW = cols == 1 ? w : (w - (gap * (cols - 1))) / cols;
+
+        final cards = <Widget>[
+          _buildMetricCard(
+            "Running Inventory",
+            _fmtNumber(stats.totalRunning),
+            "base qty",
+            Colors.blue,
+            Icons.inventory_2,
+            "Rows: ${stats.rowCount}",
+          ),
+          _buildMetricCard(
+            "Movement After",
+            _fmtSigned(stats.totalMovementAfter),
+            "net since cutoff",
+            stats.totalMovementAfter >= 0 ? Colors.green : Colors.red,
+            Icons.compare_arrows,
+            "Cutoffs: ${stats.distinctCutoffs}",
+          ),
+          _buildMetricCard(
+            "Last Count",
+            _fmtNumber(stats.totalLastCount),
+            "base qty",
+            Colors.purple,
+            Icons.fact_check,
+            "Products: ${stats.distinctProducts}",
+          ),
+          _buildMetricCard(
+            "Latest Cutoff",
+            stats.latestCutoff == null
+                ? "-"
+                : DateFormat("MMM dd, yyyy").format(stats.latestCutoff!),
+            "date",
+            Colors.orange,
+            Icons.calendar_month,
+            stats.latestCutoff == null
+                ? "-"
+                : "Earliest: ${DateFormat("MMM dd").format(stats.earliestCutoff!)}",
+          ),
+        ];
+
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: cards.map((card) {
+            return SizedBox(width: itemW, child: card);
+          }).toList(),
+        );
+      },
     );
   }
 
@@ -936,32 +1230,47 @@ class _InventoryViewState extends ConsumerState<InventoryView>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                title,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.grey[600],
-                  fontWeight: FontWeight.w600,
+              Expanded(
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[600],
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
               Icon(icon, color: color, size: 20),
             ],
           ),
           const SizedBox(height: 8),
-          Text(
-            value,
-            style: const TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-              color: Colors.black87,
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              value,
+              style: const TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87,
+              ),
             ),
           ),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Text(unit, style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+              Text(
+                unit,
+                style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
@@ -975,6 +1284,8 @@ class _InventoryViewState extends ConsumerState<InventoryView>
                     color: color,
                     fontWeight: FontWeight.w700,
                   ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],
@@ -1030,12 +1341,15 @@ class _InventoryViewState extends ConsumerState<InventoryView>
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Text(
-                trailing,
-                style: TextStyle(
-                  fontWeight: FontWeight.w900,
-                  fontSize: 16,
-                  color: color,
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  trailing,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16,
+                    color: color,
+                  ),
                 ),
               ),
               Text(
@@ -1143,29 +1457,36 @@ class _InventoryViewState extends ConsumerState<InventoryView>
   Widget _buildDetailRow(String label, String value) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 120,
-            child: Text(
-              label,
-              style: TextStyle(
-                color: Colors.grey[600],
-                fontSize: 13,
+      child: LayoutBuilder(
+        builder: (context, c) {
+          final narrow = c.maxWidth < 360;
+          final labelW = narrow ? 96.0 : 120.0;
+
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: labelW,
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: Colors.grey[600],
+                    fontSize: 13,
+                  ),
+                ),
               ),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(
-                fontWeight: FontWeight.w700,
-                fontSize: 13,
+              Expanded(
+                child: Text(
+                  value,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                  ),
+                ),
               ),
-            ),
-          ),
-        ],
+            ],
+          );
+        },
       ),
     );
   }
@@ -1217,8 +1538,12 @@ class _InventoryViewState extends ConsumerState<InventoryView>
       productIds.add(r.productId);
       cutoffDates.add(DateFormat("yyyy-MM-dd").format(r.lastCutoff));
 
-      earliest = earliest == null || r.lastCutoff.isBefore(earliest) ? r.lastCutoff : earliest;
-      latest = latest == null || r.lastCutoff.isAfter(latest) ? r.lastCutoff : latest;
+      earliest = earliest == null || r.lastCutoff.isBefore(earliest)
+          ? r.lastCutoff
+          : earliest;
+      latest = latest == null || r.lastCutoff.isAfter(latest)
+          ? r.lastCutoff
+          : latest;
     }
 
     return RunningStats(
