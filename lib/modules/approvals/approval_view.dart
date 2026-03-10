@@ -1,6 +1,8 @@
 // lib/modules/approvals/approval_view.dart
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
+import "package:vos_mobile/data/repositories/predispatch_repository.dart";
+import "package:vos_mobile/modules/approvals/predispatch/predispatch_view.dart";
 
 import "../../app.dart";
 import "../../core/auth/user_permissions.dart";
@@ -17,11 +19,15 @@ import "disbursement/disbursement_models.dart";
 import "disbursement/disbursement_view.dart";
 import "dispatch_plan/dispatch_plan_models.dart";
 import "dispatch_plan/dispatch_plan_view.dart";
+import 'leave/leave_view.dart';
 import "overtime/overtime_view.dart";
 import "sales_order/sales_order_view.dart";
 import "stock_transfer/stock_transfer_view.dart";
-import 'leave/leave_view.dart';
-
+import "invoice_cancellation/invoice_cancellation_view.dart";
+// import "invoice_cancellation/invoice_cancellation_models.dart"; // for filter enum if needed
+import "../../data/repositories/invoice_cancellation_repository.dart";
+import "../../data/repositories/price_change_repository.dart";
+import "price_change/price_change_view.dart";
 
 class ApprovalView extends ConsumerStatefulWidget {
   const ApprovalView({super.key});
@@ -65,6 +71,21 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
   bool _lvLoading = true;
   String? _lvError;
   int _lvPendingCount = 0;
+
+  // Predispatch badge
+  bool _pdLoading = true;
+  String? _pdError;
+  int _pdPendingCount = 0;
+
+  // Invoice Cancellation badge
+  bool _icLoading = true;
+  String? _icError = null;
+  int _icPendingCount = 0;
+
+  // Price Change badge
+  bool _pcLoading = true;
+  String? _pcError = null;
+  int _pcPendingCount = 0;
 
   @override
   void initState() {
@@ -118,6 +139,15 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
 
       _lvLoading = true;
       _lvError = null;
+
+      _pdLoading = true;
+      _pdError = null;
+
+      _icLoading = true;
+      _icError = null;
+
+      _pcLoading = true;
+      _pcError = null;
     });
 
     final api = ref.read(apiClientProvider);
@@ -129,15 +159,22 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
     final dbRepo = DisbursementRepository(api);
     final dpRepo = dp_repo.DispatchPlanRepository(api);
     final atRepo = AttendanceRepository(api);
+    final pdRepo = PredispatchRepository(api);
+    final icRepo = InvoiceCancellationRepository(api);
+    final pcRepo = PriceChangeRepository(api);
 
     // Run in parallel, but isolate failures cleanly.
     final stFuture = stRepo.fetchRequestedHeaderCount();
-    final soFuture = soRepo.fetchSalesOrderCount(status: SalesOrderRepository.soStatusForApproval);
+    final soFuture = soRepo.fetchSalesOrderCount(
+      status: SalesOrderRepository.soStatusForApproval,
+    );
     final otFuture = otRepo.fetchOvertimePendingCount();
     final lvFuture = lvRepo.fetchLeavePendingCount();
 
     // Pending disbursements: approver_id IS NULL AND date_approved IS NULL
-    final dbFuture = dbRepo.fetchDisbursementCount(filter: DisbursementFilter.pending);
+    final dbFuture = dbRepo.fetchDisbursementCount(
+      filter: DisbursementFilter.pending,
+    );
 
     // Dispatch Plan: use paged fetch with limit=1 to get total count from meta
     final dpFuture = dpRepo.fetchDispatchPlansPaged(
@@ -172,6 +209,17 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
         })
         .catchError((e) => 0);
 
+    // Predispatch: fetch pending count
+    final pdFuture = pdRepo.fetchPendingPredispatchCount();
+
+    // Invoice Cancellation: fetch pending count
+    final icFuture = icRepo.fetchCount(
+      status: "PENDING",
+    ); // assuming PENDING is the status value
+
+    // Price Change: fetch pending count
+    final pcFuture = pcRepo.fetchCount(status: "PENDING");
+
     final results = await Future.wait([
       stFuture.then<Object?>((v) => v).catchError((e) => e),
       soFuture.then<Object?>((v) => v).catchError((e) => e),
@@ -180,6 +228,9 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
       dbFuture.then<Object?>((v) => v).catchError((e) => e),
       dpFuture.then<Object?>((v) => v).catchError((e) => e),
       atFuture.then<Object?>((v) => v).catchError((e) => e),
+      pdFuture.then<Object?>((v) => v).catchError((e) => e),
+      icFuture.then<Object?>((v) => v).catchError((e) => e),
+      pcFuture.then<Object?>((v) => v).catchError((e) => e),
     ]);
 
     if (!mounted) return;
@@ -268,6 +319,42 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
       _atError = atRes.toString();
     }
 
+    // Predispatch result
+    final pdRes = results[7];
+    if (pdRes is int) {
+      _pdPendingCount = pdRes;
+      _pdLoading = false;
+      _pdError = null;
+    } else {
+      _pdPendingCount = 0;
+      _pdLoading = false;
+      _pdError = pdRes.toString();
+    }
+
+    // Invoice Cancellation result
+    final icRes = results[8];
+    if (icRes is int) {
+      _icPendingCount = icRes;
+      _icLoading = false;
+      _icError = null;
+    } else {
+      _icPendingCount = 0;
+      _icLoading = false;
+      _icError = icRes.toString();
+    }
+
+    // Price Change result
+    final pcRes = results[9];
+    if (pcRes is int) {
+      _pcPendingCount = pcRes;
+      _pcLoading = false;
+      _pcError = null;
+    } else {
+      _pcPendingCount = 0;
+      _pcLoading = false;
+      _pcError = pcRes.toString();
+    }
+
     setState(() {});
   }
 
@@ -278,7 +365,10 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
       _lvPendingCount +
       _dbPendingCount +
       _dpPendingCount +
-      _atPendingCount;
+      _atPendingCount +
+      _pdPendingCount +
+      _icPendingCount +
+      _pcPendingCount;
 
   bool get _hasErrors =>
       _stError != null ||
@@ -287,7 +377,11 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
       _lvError != null ||
       _dbError != null ||
       _dpError != null ||
-      _atError != null;
+      _atError != null ||
+      _atError != null ||
+      _pdError != null ||
+      _icError != null ||
+      _pcError != null;
 
   @override
   Widget build(BuildContext context) {
@@ -321,13 +415,20 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                           _otLoading ||
                           _dbLoading ||
                           _dpLoading ||
-                          _atLoading)
+                          _atLoading ||
+                          _atLoading ||
+                          _pdLoading ||
+                          _icLoading ||
+                          _pcLoading)
                         Row(
                           children: [
                             SizedBox(
                               width: 14,
                               height: 14,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: cs.primary),
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: cs.primary,
+                              ),
                             ),
                             const SizedBox(width: 8),
                             Text(
@@ -343,7 +444,10 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                         Row(
                           children: [
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 6,
+                              ),
                               decoration: BoxDecoration(
                                 color: _totalPending > 0
                                     ? cs.primaryContainer
@@ -367,12 +471,13 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                                     _totalPending > 0
                                         ? "$_totalPending pending approval${_totalPending > 1 ? 's' : ''}"
                                         : "All caught up",
-                                    style: theme.textTheme.labelMedium?.copyWith(
-                                      color: _totalPending > 0
-                                          ? cs.onPrimaryContainer
-                                          : cs.onSurfaceVariant,
-                                      fontWeight: FontWeight.w600,
-                                    ),
+                                    style: theme.textTheme.labelMedium
+                                        ?.copyWith(
+                                          color: _totalPending > 0
+                                              ? cs.onPrimaryContainer
+                                              : cs.onSurfaceVariant,
+                                          fontWeight: FontWeight.w600,
+                                        ),
                                   ),
                                 ],
                               ),
@@ -391,23 +496,51 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                     padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
                     child: Column(
                       children: [
-                        if (_stError != null) _InlineError(message: "Stock Transfer: $_stError"),
+                        if (_stError != null)
+                          _InlineError(message: "Stock Transfer: $_stError"),
                         if (_stError != null &&
-                            (_soError != null || _otError != null || _dbError != null))
+                            (_soError != null ||
+                                _otError != null ||
+                                _dbError != null))
                           const SizedBox(height: 8),
-                        if (_soError != null) _InlineError(message: "Sales Order: $_soError"),
-                        if (_soError != null && (_otError != null || _dbError != null))
+                        if (_soError != null)
+                          _InlineError(message: "Sales Order: $_soError"),
+                        if (_soError != null &&
+                            (_otError != null || _dbError != null))
                           const SizedBox(height: 8),
-                        if (_otError != null) _InlineError(message: "Overtime: $_otError"),
-                        if (_otError != null && (_lvError != null || _dbError != null))
+                        if (_otError != null)
+                          _InlineError(message: "Overtime: $_otError"),
+                        if (_otError != null &&
+                            (_lvError != null || _dbError != null))
                           const SizedBox(height: 8),
-                        if (_lvError != null) _InlineError(message: "Leave: $_lvError"),
-                        if (_lvError != null && _dbError != null) const SizedBox(height: 8),
-                        if (_dbError != null) _InlineError(message: "Disbursement: $_dbError"),
-                        if (_dbError != null && _dpError != null) const SizedBox(height: 8),
-                        if (_dpError != null) _InlineError(message: "Dispatch Plan: $_dpError"),
-                        if (_dpError != null && _atError != null) const SizedBox(height: 8),
-                        if (_atError != null) _InlineError(message: "Attendance: $_atError"),
+                        if (_lvError != null)
+                          _InlineError(message: "Leave: $_lvError"),
+                        if (_lvError != null && _dbError != null)
+                          const SizedBox(height: 8),
+                        if (_dbError != null)
+                          _InlineError(message: "Disbursement: $_dbError"),
+                        if (_dbError != null && _dpError != null)
+                          const SizedBox(height: 8),
+                        if (_dpError != null)
+                          _InlineError(message: "Dispatch Plan: $_dpError"),
+                        if (_dpError != null && _atError != null)
+                          const SizedBox(height: 8),
+                        if (_atError != null)
+                          _InlineError(message: "Attendance: $_atError"),
+                        if (_atError != null && _pdError != null)
+                          const SizedBox(height: 8),
+                        if (_pdError != null)
+                          _InlineError(message: "Predispatch: $_pdError"),
+                        if (_pdError != null && _icError != null)
+                          const SizedBox(height: 8),
+                        if (_icError != null)
+                          _InlineError(
+                            message: "Invoice Cancellation: $_icError",
+                          ),
+                        if (_icError != null && _pcError != null)
+                          const SizedBox(height: 8),
+                        if (_pcError != null)
+                          _InlineError(message: "Price Change: $_pcError"),
                       ],
                     ),
                   ),
@@ -427,9 +560,11 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                       loading: _stLoading,
                       badgeCount: _requestedCount,
                       onTap: () {
-                        Navigator.of(
-                          context,
-                        ).push(MaterialPageRoute(builder: (_) => const StockTransferView()));
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const StockTransferView(),
+                          ),
+                        );
                       },
                     ),
                     const SizedBox(height: 12),
@@ -442,9 +577,11 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                       loading: _soLoading,
                       badgeCount: _soForApprovalCount,
                       onTap: () {
-                        Navigator.of(
-                          context,
-                        ).push(MaterialPageRoute(builder: (_) => const SalesOrderApprovalView()));
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const SalesOrderApprovalView(),
+                          ),
+                        );
                       },
                     ),
                     const SizedBox(height: 12),
@@ -457,9 +594,11 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                       loading: _otLoading,
                       badgeCount: _otPendingCount,
                       onTap: () {
-                        Navigator.of(
-                          context,
-                        ).push(MaterialPageRoute(builder: (_) => const OvertimeApprovalView()));
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const OvertimeApprovalView(),
+                          ),
+                        );
                       },
                     ),
                     const SizedBox(height: 12),
@@ -472,9 +611,11 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                       loading: _lvLoading,
                       badgeCount: _lvPendingCount,
                       onTap: () {
-                        Navigator.of(
-                          context,
-                        ).push(MaterialPageRoute(builder: (_) => const LeaveApprovalView()));
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const LeaveApprovalView(),
+                          ),
+                        );
                       },
                     ),
                     const SizedBox(height: 12),
@@ -487,9 +628,11 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                       loading: _dbLoading,
                       badgeCount: _dbPendingCount,
                       onTap: () {
-                        Navigator.of(
-                          context,
-                        ).push(MaterialPageRoute(builder: (_) => const DisbursementApprovalView()));
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const DisbursementApprovalView(),
+                          ),
+                        );
                       },
                     ),
                     const SizedBox(height: 12),
@@ -502,9 +645,11 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                       loading: _dpLoading,
                       badgeCount: _dpPendingCount,
                       onTap: () {
-                        Navigator.of(
-                          context,
-                        ).push(MaterialPageRoute(builder: (_) => const DispatchPlanView()));
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const DispatchPlanView(),
+                          ),
+                        );
                       },
                     ),
                     const SizedBox(height: 12),
@@ -517,9 +662,63 @@ class _ApprovalViewState extends ConsumerState<ApprovalView> {
                       loading: _atLoading,
                       badgeCount: _atPendingCount,
                       onTap: () {
-                        Navigator.of(
-                          context,
-                        ).push(MaterialPageRoute(builder: (_) => const AttendanceApprovalView()));
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const AttendanceApprovalView(),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    _ApprovalCard(
+                      title: "Predispatch",
+                      subtitle: "Review pending predispatch approvals",
+                      icon: Icons.local_shipping_rounded,
+                      iconColor: const Color(0xFF059669),
+                      iconBackground: const Color(0xFFD1FAE5),
+                      loading: _pdLoading,
+                      badgeCount: _pdPendingCount,
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const PredispatchView(),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    _ApprovalCard(
+                      title: "Invoice Cancellation",
+                      subtitle: "Review cancellation requests",
+                      icon: Icons.receipt_long_rounded, // or description/cancel
+                      iconColor: const Color(0xFFE11D48),
+                      iconBackground: const Color(0xFFFFE4E6),
+                      loading: _icLoading,
+                      badgeCount: _icPendingCount,
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                const InvoiceCancellationApprovalView(),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    _ApprovalCard(
+                      title: "Price Change",
+                      subtitle: "Review price modification requests",
+                      icon: Icons.sell_rounded,
+                      iconColor: const Color(0xFFF97316),
+                      iconBackground: const Color(0xFFFFF7ED),
+                      loading: _pcLoading,
+                      badgeCount: _pcPendingCount,
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const PriceChangeApprovalView(),
+                          ),
+                        );
                       },
                     ),
                   ]),
@@ -604,7 +803,10 @@ class _ApprovalCard extends StatelessWidget {
           decoration: BoxDecoration(
             color: cs.surface,
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: cs.outlineVariant.withOpacity(0.5), width: 1),
+            border: Border.all(
+              color: cs.outlineVariant.withOpacity(0.5),
+              width: 1,
+            ),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withOpacity(0.03),
@@ -647,7 +849,10 @@ class _ApprovalCard extends StatelessWidget {
                           ),
                           if (!loading && badgeCount > 0)
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
                               decoration: BoxDecoration(
                                 color: cs.primaryContainer,
                                 borderRadius: BorderRadius.circular(12),
@@ -679,7 +884,10 @@ class _ApprovalCard extends StatelessWidget {
                             SizedBox(
                               width: 12,
                               height: 12,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: cs.primary),
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: cs.primary,
+                              ),
                             ),
                             const SizedBox(width: 8),
                             Text(
@@ -704,9 +912,13 @@ class _ApprovalCard extends StatelessWidget {
                             ),
                             const SizedBox(width: 6),
                             Text(
-                              badgeCount == 0 ? "No pending requests" : "$badgeCount pending",
+                              badgeCount == 0
+                                  ? "No pending requests"
+                                  : "$badgeCount pending",
                               style: theme.textTheme.labelSmall?.copyWith(
-                                color: badgeCount > 0 ? iconColor : cs.onSurfaceVariant,
+                                color: badgeCount > 0
+                                    ? iconColor
+                                    : cs.onSurfaceVariant,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),

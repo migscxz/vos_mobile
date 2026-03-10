@@ -1,461 +1,258 @@
-import "dart:async";
-import "package:flutter/material.dart";
+import 'dart:async';
 
-class PreDispatchView extends StatefulWidget {
-  const PreDispatchView({super.key});
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:vos_mobile/modules/approvals/predispatch/predispatch_sheet.dart';
+
+import '../../../app.dart';
+import '../../../core/network/api_client.dart';
+import '../../../data/repositories/predispatch_repository.dart';
+import 'predispatch_models.dart';
+
+class PredispatchView extends ConsumerStatefulWidget {
+  const PredispatchView({super.key});
 
   @override
-  State<PreDispatchView> createState() => _PreDispatchViewState();
+  ConsumerState<PredispatchView> createState() => _PredispatchViewState();
 }
 
-// =====================
-// MODELS (STATIC UI)
-// =====================
+class _PredispatchViewState extends ConsumerState<PredispatchView> {
+  static const int _pageSize = 20;
 
-enum PreDispatchStatus {
-  all("All"),
-  pending("Pending"),
-  approved("Approved"),
-  rejected("Rejected");
-
-  final String label;
-  const PreDispatchStatus(this.label);
-}
-
-class PreDispatchHeader {
-  final String dpNo;
-  final PreDispatchStatus status;
-  final DateTime requestedAt;
-
-  final String requesterName;
-  final String route;
-  final String vehicle;
-  final int totalStops;
-  final int totalQty;
-
-  final List<PreDispatchItem> items;
-
-  const PreDispatchHeader({
-    required this.dpNo,
-    required this.status,
-    required this.requestedAt,
-    required this.requesterName,
-    required this.route,
-    required this.vehicle,
-    required this.totalStops,
-    required this.totalQty,
-    required this.items,
-  });
-}
-
-class PreDispatchItem {
-  final String customerName;
-  final String address;
-  final String itemsSummary;
-  final int qty;
-
-  const PreDispatchItem({
-    required this.customerName,
-    required this.address,
-    required this.itemsSummary,
-    required this.qty,
-  });
-}
-
-// =====================
-// PAGE
-// =====================
-
-class _PreDispatchViewState extends State<PreDispatchView> {
+  // Controllers
   final TextEditingController _searchCtrl = TextEditingController();
+  final ScrollController _scrollCtrl = ScrollController();
   Timer? _debounce;
 
-  PreDispatchStatus _selectedStatus = PreDispatchStatus.all;
-  String _query = "";
+  // State
+  late final ApiClient _api;
+  late final PredispatchRepository _repo;
 
-  // Static sample dataset
-  late final List<PreDispatchHeader> _headers = _seed();
+  String _query = "";
+  PredispatchStatus? _selectedStatus =
+      PredispatchStatus.pending; // Default to Pending for approvals
+
+  List<PredispatchHeader> _items = [];
+  bool _loading = true;
+  bool _loadingMore = false;
+  bool _hasMore = true;
+  String? _error;
+  int _offset = 0;
+  bool _autoFilling = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _api = ref.read(apiClientProvider);
+    _repo = PredispatchRepository(_api);
+    _scrollCtrl.addListener(_onScroll);
+    _fetchFirstPage();
+  }
 
   @override
   void dispose() {
     _debounce?.cancel();
     _searchCtrl.dispose();
+    _scrollCtrl.dispose();
     super.dispose();
+  }
+
+  // ===========================================================================
+  // DATA LOGIC
+  // ===========================================================================
+
+  void _onScroll() {
+    if (_loading || _loadingMore || !_hasMore || !_scrollCtrl.hasClients) return;
+    final maxScroll = _scrollCtrl.position.maxScrollExtent;
+    final currentScroll = _scrollCtrl.position.pixels;
+    if (currentScroll >= maxScroll - 240) {
+      _fetchNextPage();
+    }
   }
 
   void _onSearchChanged(String value) {
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 280), () {
+    _debounce = Timer(const Duration(milliseconds: 320), () {
       if (!mounted) return;
-      setState(() => _query = value.trim());
+      final next = value.trim();
+      if (next == _query) return;
+      setState(() => _query = next);
+      _resetAndFetch();
     });
   }
 
-  void _showFilterMenu() async {
-    final selected = await showModalBottomSheet<PreDispatchStatus>(
+  void _resetAndFetch() {
+    setState(() {
+      _loading = true;
+      _loadingMore = false;
+      _hasMore = true;
+      _error = null;
+      _offset = 0;
+      _items.clear();
+    });
+    _fetchFirstPage();
+  }
+
+  Future<void> _fetchFirstPage() async {
+    try {
+      final page = await _repo.fetchPredispatchPlansPaged(
+        limit: _pageSize,
+        offset: 0,
+        search: _query.isNotEmpty ? _query : null,
+        status: _selectedStatus,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _items = page.items;
+        _offset = page.items.length;
+        _hasMore = page.hasMore;
+        _loading = false;
+      });
+      _scheduleViewportFill();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _fetchNextPage() async {
+    if (_loadingMore || !_hasMore) return;
+    setState(() => _loadingMore = true);
+
+    try {
+      final page = await _repo.fetchPredispatchPlansPaged(
+        limit: _pageSize,
+        offset: _offset,
+        search: _query.isNotEmpty ? _query : null,
+        status: _selectedStatus,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _items.addAll(page.items);
+        _offset += page.items.length;
+        _hasMore = page.hasMore;
+        _loadingMore = false;
+      });
+      _scheduleViewportFill();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loadingMore = false;
+      });
+    }
+  }
+
+  void _scheduleViewportFill() {
+    if (_autoFilling) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _autoFillViewportIfNeeded());
+  }
+
+  Future<void> _autoFillViewportIfNeeded() async {
+    if (!mounted ||
+        _autoFilling ||
+        !_hasMore ||
+        _loading ||
+        _loadingMore ||
+        !_scrollCtrl.hasClients)
+      return;
+
+    final pos = _scrollCtrl.position;
+    if (pos.maxScrollExtent > 0) return;
+
+    _autoFilling = true;
+    try {
+      int safety = 0;
+      while (mounted && _hasMore && !_loadingMore && _scrollCtrl.hasClients) {
+        final p = _scrollCtrl.position;
+        if (p.maxScrollExtent > 0) break;
+        if (safety++ > 5) break;
+        await _fetchNextPage();
+      }
+    } finally {
+      _autoFilling = false;
+    }
+  }
+
+  Future<void> _showFilterMenu() async {
+    final previous = _selectedStatus;
+    final selected = await showModalBottomSheet<PredispatchStatus?>(
       context: context,
       useSafeArea: true,
       showDragHandle: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (ctx) {
         final cs = Theme.of(ctx).colorScheme;
-        return Material(
-          color: cs.surface,
-          child: ListView(
-            shrinkWrap: true,
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 12, 16, 8),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
                 child: Text(
                   "Filter by Status",
-                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 20, color: cs.onSurface),
                 ),
               ),
-              ...PreDispatchStatus.values.map((s) {
-                final isSelected = s == _selectedStatus;
-                return ListTile(
-                  leading: Icon(
-                    isSelected ? Icons.check_circle_rounded : Icons.circle_outlined,
-                    color: isSelected ? cs.primary : cs.onSurfaceVariant,
-                  ),
-                  title: Text(
-                    s.label,
-                    style: TextStyle(
-                      fontWeight: isSelected ? FontWeight.w900 : FontWeight.w700,
-                    ),
-                  ),
-                  onTap: () => Navigator.pop(ctx, s),
-                );
-              }),
-              const SizedBox(height: 12),
+              _buildFilterOption(ctx, "All", null),
+              ...PredispatchStatus.values.map((s) => _buildFilterOption(ctx, s.label, s)),
+              const SizedBox(height: 8),
             ],
           ),
         );
       },
     );
 
-    if (selected == null) return;
-    setState(() => _selectedStatus = selected);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final cs = theme.colorScheme;
-
-    // Filter: query + status
-    final qLower = _query.toLowerCase();
-
-    final filtered = _headers.where((h) {
-      final matchesQuery = qLower.isEmpty
-          ? true
-          : <String>[
-              h.dpNo,
-              h.requesterName,
-              h.route,
-              h.vehicle,
-              ...h.items.map((e) => e.customerName),
-              ...h.items.map((e) => e.address),
-              ...h.items.map((e) => e.itemsSummary),
-            ].join(" ").toLowerCase().contains(qLower);
-
-      final matchesStatus =
-          _selectedStatus == PreDispatchStatus.all ? true : h.status == _selectedStatus;
-
-      // If searching, ignore status filter (same UX pattern you used before)
-      if (_query.isNotEmpty) return matchesQuery;
-      return matchesStatus;
-    }).toList();
-
-    // Group by date
-    final groups = <String, List<PreDispatchHeader>>{};
-    for (final h in filtered) {
-      final key = _fmtYmd(h.requestedAt);
-      (groups[key] ??= []).add(h);
+    // If selected is not null, it means a specific status was chosen.
+    // If selected is null but _selectedStatus changed (to null for "All"), refresh.
+    // If selected is null and _selectedStatus unchanged, it was a dismissal.
+    if (selected != null || _selectedStatus != previous) {
+      _resetAndFetch();
     }
-    final groupKeys = groups.keys.toList()..sort((a, b) => b.compareTo(a));
-
-    return Scaffold(
-      backgroundColor: cs.surfaceContainerLowest,
-      appBar: AppBar(
-        title: const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              "Pre-Dispatch",
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-            ),
-            Text(
-              "Approvals (Static UI)",
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.normal),
-            ),
-          ],
-        ),
-        actions: [
-          IconButton(
-            onPressed: _showFilterMenu,
-            icon: const Icon(Icons.tune_rounded),
-            tooltip: "Filter",
-          ),
-          IconButton(
-            onPressed: () {
-              // static placeholder refresh
-              setState(() {});
-            },
-            icon: const Icon(Icons.refresh_rounded),
-            tooltip: "Reload",
-          ),
-          const SizedBox(width: 8),
-        ],
-      ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: SearchBar(
-              controller: _searchCtrl,
-              hintText: "Search DP #, customers, requester, route...",
-              onChanged: _onSearchChanged,
-              leading: const Icon(Icons.search),
-              elevation: WidgetStateProperty.all(0),
-              backgroundColor: WidgetStateProperty.all(cs.surfaceContainerHigh),
-              shape: WidgetStateProperty.all(
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-            child: Row(
-              children: [
-                InkWell(
-                  onTap: _showFilterMenu,
-                  borderRadius: BorderRadius.circular(999),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: cs.surfaceContainerHigh,
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: cs.outlineVariant.withOpacity(0.5)),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.filter_alt_rounded,
-                          size: 16,
-                          color: cs.onSurfaceVariant,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          _query.isNotEmpty ? "Search Results" : _selectedStatus.label,
-                          style: theme.textTheme.labelLarge?.copyWith(
-                            fontWeight: FontWeight.w900,
-                            color: cs.onSurface,
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Icon(
-                          Icons.expand_more_rounded,
-                          size: 18,
-                          color: cs.onSurfaceVariant,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const Spacer(),
-                Text(
-                  "${filtered.length} plans",
-                  style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 4),
-          Expanded(
-            child: filtered.isEmpty
-                ? ListView(children: [_EmptyState(query: _query)])
-                : ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                    itemCount: groupKeys.length,
-                    itemBuilder: (context, gi) {
-                      final dateKey = groupKeys[gi];
-                      final rows = groups[dateKey]!;
-                      return _DateGroup(
-                        dateKey: dateKey,
-                        rows: rows,
-                        onTapRow: (h) => _openDetail(h),
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
-    );
   }
 
-  Future<void> _openDetail(PreDispatchHeader header) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _PreDispatchDetailSheet(header: header),
-    );
-  }
-}
-
-// =====================
-// UI: DATE GROUP
-// =====================
-
-class _DateGroup extends StatelessWidget {
-  final String dateKey;
-  final List<PreDispatchHeader> rows;
-  final ValueChanged<PreDispatchHeader> onTapRow;
-
-  const _DateGroup({
-    required this.dateKey,
-    required this.rows,
-    required this.onTapRow,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8, top: 10),
-          child: Text(
-            dateKey,
-            style: TextStyle(
-              fontWeight: FontWeight.w900,
-              color: cs.onSurfaceVariant,
-            ),
-          ),
-        ),
-        ...rows.map(
-          (h) => Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: _PreDispatchHeaderCard(header: h, onTap: () => onTapRow(h)),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-// =====================
-// UI: HEADER CARD
-// =====================
-
-class _PreDispatchHeaderCard extends StatelessWidget {
-  final PreDispatchHeader header;
-  final VoidCallback onTap;
-
-  const _PreDispatchHeaderCard({required this.header, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final cs = theme.colorScheme;
-
-    final statusColor = _statusColor(header.status, cs);
-
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        decoration: BoxDecoration(
-          color: cs.surface,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: cs.outlineVariant.withOpacity(0.4)),
-        ),
-        child: IntrinsicHeight(
+  Widget _buildFilterOption(BuildContext ctx, String label, PredispatchStatus? value) {
+    final isSelected = value == _selectedStatus;
+    final cs = Theme.of(ctx).colorScheme;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          // We need to trigger the update here
+          setState(() => _selectedStatus = value);
+          Navigator.pop(ctx); // Close modal
+          _resetAndFetch(); // Fetch
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
           child: Row(
             children: [
               Container(
-                width: 5,
+                width: 24,
+                height: 24,
                 decoration: BoxDecoration(
-                  color: statusColor,
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(12),
-                    bottomLeft: Radius.circular(12),
-                  ),
+                  shape: BoxShape.circle,
+                  color: isSelected ? cs.primary : Colors.transparent,
+                  border: Border.all(color: isSelected ? cs.primary : cs.outline, width: 2),
                 ),
+                child: isSelected ? Icon(Icons.check, size: 16, color: cs.onPrimary) : null,
               ),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              header.dpNo,
-                              style: const TextStyle(
-                                fontFamily: "monospace",
-                                fontWeight: FontWeight.w900,
-                                fontSize: 15,
-                              ),
-                            ),
-                          ),
-                          _Pill(
-                            text: header.status.label.toUpperCase(),
-                            bg: statusColor.withOpacity(0.14),
-                            fg: statusColor,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        "${header.totalStops} stop(s) • ${header.totalQty} total qty",
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w900,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 6),
-                      Row(
-                        children: [
-                          Icon(Icons.route_rounded, size: 16, color: cs.primary),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              header.route,
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: cs.onSurfaceVariant,
-                                fontWeight: FontWeight.w800,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Icon(Icons.chevron_right_rounded, color: cs.onSurfaceVariant),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      Divider(height: 1, color: cs.outlineVariant.withOpacity(0.45)),
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _MiniKV(label: "Requester", value: header.requesterName),
-                          ),
-                          Expanded(
-                            child: _MiniKV(label: "Vehicle", value: header.vehicle),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
+              const SizedBox(width: 16),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                  color: isSelected ? cs.onSurface : cs.onSurfaceVariant,
                 ),
               ),
             ],
@@ -465,318 +262,432 @@ class _PreDispatchHeaderCard extends StatelessWidget {
     );
   }
 
-  static Color _statusColor(PreDispatchStatus s, ColorScheme cs) {
-    switch (s) {
-      case PreDispatchStatus.all:
-        return cs.outline;
-      case PreDispatchStatus.pending:
-        return cs.primary;
-      case PreDispatchStatus.approved:
-        return Colors.green;
-      case PreDispatchStatus.rejected:
-        return cs.error;
+  Future<void> _openApprovalModal(PredispatchHeader header) async {
+    final result = await showModalBottomSheet<PredispatchApproveOutcome?>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => PredispatchApprovalSheet(header: header),
+    );
+
+    if (result != null && result.success) {
+      _resetAndFetch();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Predispatch approved successfully."),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } else if (result != null && !result.success) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Approval failed: ${result.error}"),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     }
   }
-}
 
-class _Pill extends StatelessWidget {
-  final String text;
-  final Color bg;
-  final Color fg;
-
-  const _Pill({required this.text, required this.bg, required this.fg});
+  // ===========================================================================
+  // UI BUILD
+  // ===========================================================================
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: fg.withOpacity(0.25)),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: fg),
-      ),
-    );
-  }
-}
-
-class _MiniKV extends StatelessWidget {
-  final String label;
-  final String value;
-
-  const _MiniKV({required this.label, required this.value});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final cs = Theme.of(context).colorScheme;
+    final searching = _query.isNotEmpty;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: theme.textTheme.labelSmall?.copyWith(
-            color: cs.onSurfaceVariant,
-            fontWeight: FontWeight.w800,
-          ),
+    return Scaffold(
+      backgroundColor: cs.surfaceContainerLowest,
+      appBar: AppBar(
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        backgroundColor: cs.surface,
+        centerTitle: false,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              "Predispatch Approvals",
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 24,
+                color: cs.onSurface,
+                letterSpacing: -0.8,
+              ),
+            ),
+            Text(
+              "Review and approve pending dispatches",
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: cs.onSurfaceVariant,
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 2),
-        Text(
-          value,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: theme.textTheme.bodyMedium?.copyWith(
-            fontWeight: FontWeight.w900,
-            color: cs.onSurface,
+        actions: [IconButton(icon: const Icon(Icons.refresh), onPressed: () => _resetAndFetch())],
+      ),
+      body: Column(
+        children: [
+          _buildSearchAndFilterHeader(cs, searching),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _error != null
+                ? _ErrorState(message: _error!, onRetry: _resetAndFetch)
+                : RefreshIndicator(
+                    onRefresh: () async => _resetAndFetch(),
+                    child: _items.isEmpty
+                        ? ListView(children: [_EmptyState(query: _query)])
+                        : ListView.builder(
+                            controller: _scrollCtrl,
+                            padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+                            itemCount: _items.length + (_loadingMore ? 1 : 0),
+                            itemBuilder: (context, i) {
+                              if (_loadingMore && i == _items.length) {
+                                return const _LoadingMoreIndicator();
+                              }
+                              final item = _items[i];
+                              return _PredispatchCard(
+                                header: item,
+                                enabled: item.isApprovable,
+                                onTap: () => _openApprovalModal(item),
+                              );
+                            },
+                          ),
+                  ),
           ),
-        ),
-      ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSearchAndFilterHeader(ColorScheme cs, bool searching) {
+    return Container(
+      color: cs.surface,
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+      child: Column(
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              color: cs.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: TextField(
+              controller: _searchCtrl,
+              onChanged: _onSearchChanged,
+              decoration: InputDecoration(
+                hintText: "Search Dispatch No...",
+                prefixIcon: Icon(Icons.search_rounded, color: cs.primary, size: 20),
+                suffixIcon: _searchCtrl.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.cancel, size: 18),
+                        onPressed: () {
+                          _searchCtrl.clear();
+                          _onSearchChanged("");
+                        },
+                      )
+                    : null,
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              GestureDetector(
+                onTap: _showFilterMenu,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: cs.outlineVariant),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.tune_rounded, size: 16, color: cs.primary),
+                      const SizedBox(width: 8),
+                      Text(
+                        searching ? "Search Results" : (_selectedStatus?.label ?? "All Statuses"),
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                      ),
+                      const Icon(Icons.arrow_drop_down),
+                    ],
+                  ),
+                ),
+              ),
+              const Spacer(),
+              if (!_loading)
+                Text(
+                  "${_items.length} Items",
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: cs.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }
 
-// =====================
-// UI: DETAIL SHEET (STATIC)
-// =====================
+// ==============================================================================
+// PROFESSIONAL UI COMPONENTS (Mirrors StockTransferCard)
+// ==============================================================================
 
-class _PreDispatchDetailSheet extends StatelessWidget {
-  final PreDispatchHeader header;
-  const _PreDispatchDetailSheet({required this.header});
+class _PredispatchCard extends StatelessWidget {
+  final PredispatchHeader header;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  const _PredispatchCard({required this.header, required this.enabled, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
+    final statusColor = getPredispatchStatusColor(header.status, cs);
 
     return Container(
-      color: Colors.transparent,
-      child: DraggableScrollableSheet(
-        initialChildSize: 0.80,
-        minChildSize: 0.55,
-        maxChildSize: 0.92,
-        builder: (ctx, scrollCtrl) {
-          return Container(
-            decoration: BoxDecoration(
-              color: cs.surface,
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(18),
-                topRight: Radius.circular(18),
-              ),
-              border: Border.all(color: cs.outlineVariant.withOpacity(0.4)),
-            ),
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: cs.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: enabled ? cs.outlineVariant.withOpacity(0.5) : cs.outlineVariant.withOpacity(0.2),
+        ),
+        boxShadow: [
+          BoxShadow(color: cs.shadow.withOpacity(0.03), blurRadius: 10, offset: const Offset(0, 4)),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: enabled ? onTap : null,
+          borderRadius: BorderRadius.circular(20),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Padding(
-                  padding: const EdgeInsets.only(top: 10, bottom: 6),
-                  child: Container(
-                    width: 44,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: cs.onSurfaceVariant.withOpacity(0.35),
-                      borderRadius: BorderRadius.circular(999),
+                // Top Row: Dispatch No & Status
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          header.dispatchNo,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w800,
+                            color: cs.onSurface,
+                          ),
+                        ),
+                        Text(
+                          _formatSimpleDate(header.createdAt),
+                          style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+                        ),
+                      ],
                     ),
-                  ),
+                    _StatusBadge(text: header.status.label.toUpperCase(), color: statusColor),
+                  ],
                 ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          "Pre-Dispatch ${header.dpNo}",
-                          style: theme.textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w900,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      IconButton(
-                        onPressed: () => Navigator.of(context).pop(),
-                        icon: const Icon(Icons.close_rounded),
-                      ),
-                    ],
-                  ),
+
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Divider(height: 1, thickness: 0.5),
                 ),
-                Expanded(
-                  child: ListView(
-                    controller: scrollCtrl,
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: cs.surfaceContainerLowest,
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: cs.outlineVariant.withOpacity(0.35)),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _kv("Requester", header.requesterName),
-                            const SizedBox(height: 6),
-                            _kv(
-                              "Requested at",
-                              "${_fmtYmd(header.requestedAt)} ${_fmtHm(header.requestedAt)}",
+
+                // Middle Row: Branch & Driver Info
+                Row(
+                  children: [
+                    // Visual Connector Line
+                    Column(
+                      children: [
+                        Icon(Icons.store, size: 12, color: cs.primary),
+                        Container(width: 1, height: 20, color: cs.outlineVariant),
+                        Icon(Icons.local_shipping, size: 12, color: cs.secondary),
+                      ],
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _DetailRow(label: "BRANCH", value: header.branchName),
+                          const SizedBox(height: 8),
+                          _DetailRow(label: "DRIVER", value: header.driverName),
+                        ],
+                      ),
+                    ),
+
+                    // Amount Badge
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: cs.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            "₱${header.totalAmount.toStringAsFixed(2)}",
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: cs.primary,
+                              fontSize: 13,
                             ),
-                            const SizedBox(height: 6),
-                            _kv("Route", header.route),
-                            const SizedBox(height: 6),
-                            _kv("Vehicle", header.vehicle),
-                            const SizedBox(height: 6),
-                            _kv("Total Qty", "${header.totalQty}"),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      Text(
-                        "Stops (${header.items.length})",
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      ...header.items.map((item) {
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 10),
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: cs.surfaceContainerLowest,
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: cs.outlineVariant.withOpacity(0.35)),
                           ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                item.customerName,
-                                style: theme.textTheme.titleSmall?.copyWith(
-                                  fontWeight: FontWeight.w900,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                item.address,
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: cs.onSurfaceVariant,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              const SizedBox(height: 10),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      item.itemsSummary,
-                                      style: theme.textTheme.bodyMedium?.copyWith(
-                                        fontWeight: FontWeight.w800,
-                                      ),
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  _qtyChip(item.qty, cs),
-                                ],
-                              ),
-                            ],
+                          Text(
+                            "AMOUNT",
+                            style: TextStyle(
+                              fontSize: 8,
+                              fontWeight: FontWeight.w900,
+                              color: cs.onSurfaceVariant,
+                            ),
                           ),
-                        );
-                      }),
-                    ],
-                  ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () {
-                            // static action
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text("Reject (static UI)")),
-                            );
-                          },
-                          style: OutlinedButton.styleFrom(
-                            minimumSize: const Size.fromHeight(48),
-                            side: BorderSide(color: cs.error.withOpacity(0.45)),
+
+                const SizedBox(height: 16),
+
+                // Bottom Row: Review Action
+                Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 10,
+                      backgroundColor: cs.primaryContainer,
+                      child: Icon(Icons.calendar_today, size: 12, color: cs.onPrimaryContainer),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      "Dispatch: ${_formatSimpleDate(header.dispatchDate).split('•')[0]}",
+                      style: theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                    const Spacer(),
+                    if (enabled)
+                      const Row(
+                        children: [
+                          Text(
+                            "Review",
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue,
+                            ),
                           ),
-                          child: Text(
-                            "Reject",
-                            style: TextStyle(fontWeight: FontWeight.w900, color: cs.error),
-                          ),
-                        ),
+                          Icon(Icons.chevron_right, size: 16, color: Colors.blue),
+                        ],
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: FilledButton(
-                          onPressed: () {
-                            // static action
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text("Approve (static UI)")),
-                            );
-                          },
-                          style: FilledButton.styleFrom(
-                            minimumSize: const Size.fromHeight(48),
-                          ),
-                          child: const Text(
-                            "Approve",
-                            style: TextStyle(fontWeight: FontWeight.w900),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                  ],
                 ),
               ],
             ),
-          );
-        },
+          ),
+        ),
       ),
     );
   }
 
-  static Widget _kv(String k, String v) {
+  String _formatSimpleDate(DateTime date) {
+    final months = [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
+    ];
+    return "${date.day} ${months[date.month - 1]} • ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}";
+  }
+}
+
+class _DetailRow extends StatelessWidget {
+  final String label;
+  final String? value;
+  const _DetailRow({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SizedBox(
-          width: 96,
-          child: Text(k, style: const TextStyle(fontWeight: FontWeight.w900)),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 9,
+            fontWeight: FontWeight.w900,
+            color: cs.onSurfaceVariant.withOpacity(0.5),
+          ),
         ),
-        Expanded(child: Text(v)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            value ?? "N/A",
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
       ],
     );
   }
+}
 
-  static Widget _qtyChip(int qty, ColorScheme cs) {
+class _StatusBadge extends StatelessWidget {
+  final String text;
+  final Color color;
+  const _StatusBadge({required this.text, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: cs.primary.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: cs.primary.withOpacity(0.25)),
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withOpacity(0.2)),
       ),
       child: Text(
-        "Qty $qty",
+        text,
         style: TextStyle(
+          fontSize: 10,
           fontWeight: FontWeight.w900,
-          color: cs.primary,
-          fontSize: 12,
+          color: color,
+          letterSpacing: 0.5,
         ),
       ),
     );
   }
 }
 
-// =====================
-// EMPTY STATE
-// =====================
+class _LoadingMoreIndicator extends StatelessWidget {
+  const _LoadingMoreIndicator();
+  @override
+  Widget build(BuildContext context) => const Padding(
+    padding: EdgeInsets.symmetric(vertical: 24),
+    child: Center(
+      child: SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2)),
+    ),
+  );
+}
 
 class _EmptyState extends StatelessWidget {
   final String query;
@@ -785,96 +696,39 @@ class _EmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(top: 100),
+      child: Column(
+        children: [
+          Icon(Icons.local_shipping_outlined, size: 64, color: cs.outlineVariant),
+          const SizedBox(height: 16),
+          Text(
+            query.isEmpty ? "No predispatch approvals found" : "No results for \"$query\"",
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
+class _ErrorState extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
+  const _ErrorState({required this.message, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
     return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.inbox_rounded, size: 64, color: cs.onSurfaceVariant),
-            const SizedBox(height: 12),
-            Text(
-              query.isEmpty ? "No pre-dispatch plans found." : "No results for '$query'.",
-              style: TextStyle(fontWeight: FontWeight.w900, color: cs.onSurface),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 6),
-            Text(
-              "Try adjusting search or filter.",
-              style: TextStyle(color: cs.onSurfaceVariant),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.error_outline, size: 48, color: Colors.red),
+          const SizedBox(height: 16),
+          Text(message, textAlign: TextAlign.center),
+          TextButton(onPressed: onRetry, child: const Text("Retry")),
+        ],
       ),
     );
   }
-}
-
-// =====================
-// UTIL
-// =====================
-
-List<PreDispatchHeader> _seed() {
-  final now = DateTime.now();
-
-  PreDispatchHeader mk({
-    required String dpNo,
-    required PreDispatchStatus status,
-    required DateTime at,
-  }) {
-    final items = <PreDispatchItem>[
-      const PreDispatchItem(
-        customerName: "ACME Trading",
-        address: "Brgy. San Isidro, Quezon City",
-        itemsSummary: "3 item(s): Gloves, Masks, Alcohol",
-        qty: 24,
-      ),
-      const PreDispatchItem(
-        customerName: "MedLab Supplies",
-        address: "Makati City",
-        itemsSummary: "2 item(s): Reagents, Test kits",
-        qty: 10,
-      ),
-      const PreDispatchItem(
-        customerName: "Hospital X",
-        address: "Pasig City",
-        itemsSummary: "4 item(s): Syringes, IV sets, Gauze, Tape",
-        qty: 40,
-      ),
-    ];
-
-    return PreDispatchHeader(
-      dpNo: dpNo,
-      status: status,
-      requestedAt: at,
-      requesterName: "Juan Dela Cruz",
-      route: "Main Branch → Metro Manila Route",
-      vehicle: "VAN-123 (Toyota HiAce)",
-      totalStops: items.length,
-      totalQty: items.fold<int>(0, (s, i) => s + i.qty),
-      items: items,
-    );
-  }
-
-  return [
-    mk(dpNo: "DP-2026-00021", status: PreDispatchStatus.pending, at: now.subtract(const Duration(hours: 3))),
-    mk(dpNo: "DP-2026-00020", status: PreDispatchStatus.pending, at: now.subtract(const Duration(hours: 6))),
-    mk(dpNo: "DP-2026-00019", status: PreDispatchStatus.approved, at: now.subtract(const Duration(days: 1, hours: 2))),
-    mk(dpNo: "DP-2026-00018", status: PreDispatchStatus.rejected, at: now.subtract(const Duration(days: 1, hours: 5))),
-    mk(dpNo: "DP-2026-00017", status: PreDispatchStatus.approved, at: now.subtract(const Duration(days: 2, hours: 1))),
-  ];
-}
-
-String _fmtYmd(DateTime dt) {
-  final d = dt.toLocal();
-  String two(int n) => n.toString().padLeft(2, "0");
-  return "${d.year}-${two(d.month)}-${two(d.day)}";
-}
-
-String _fmtHm(DateTime dt) {
-  final d = dt.toLocal();
-  String two(int n) => n.toString().padLeft(2, "0");
-  return "${two(d.hour)}:${two(d.minute)}";
 }

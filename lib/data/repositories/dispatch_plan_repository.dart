@@ -1,3 +1,5 @@
+import "package:flutter/material.dart";
+
 import "../../core/network/api_client.dart";
 import "../../modules/approvals/dispatch_plan/dispatch_plan_models.dart";
 
@@ -26,10 +28,7 @@ class PagedResult<T> {
 class ApproveResult {
   final int consolidatorId;
   final String? consolidatorNo;
-  const ApproveResult({
-    required this.consolidatorId,
-    required this.consolidatorNo,
-  });
+  const ApproveResult({required this.consolidatorId, required this.consolidatorNo});
 }
 
 // ==============================================================================
@@ -45,8 +44,8 @@ class DispatchPlanRepository {
   static const String _dpCollection = "dispatch_plan";
   static const String _dpDetailsCollection = "dispatch_plan_details";
   static const String _branchCollection = "branches";
-  static const String _userCollection = "user"; 
-  
+  static const String _userCollection = "user";
+
   // The ID of the row in `pick_list_no` that tracks our counters
   static const int _pickListPk = 15;
   static const String _consolidatorStatusPending = "Picking"; // Changed to Picking as per flow
@@ -109,7 +108,7 @@ class DispatchPlanRepository {
       _fetchBranches(branchIds.toList()),
       _fetchDrivers(driverIds.toList()),
     ]);
-    
+
     final branchMap = results[0];
     final driverMap = results[1];
 
@@ -141,10 +140,7 @@ class DispatchPlanRepository {
     try {
       final res = await _api.getJson(
         "/items/$_dpCollection",
-        query: {
-          "aggregate[count]": "*",
-          "filter[status][_eq]": "Pending",
-        },
+        query: {"aggregate[count]": "*", "filter[status][_eq]": "Pending"},
       );
       final data = res["data"] as List?;
       if (data != null && data.isNotEmpty) {
@@ -161,7 +157,7 @@ class DispatchPlanRepository {
   // =============================
 
   Future<List<DispatchPlanItem>> fetchDispatchPlanItems(int dispatchId) async {
-    // Fetches the items linked to this dispatch plan. 
+    // Fetches the items linked to this dispatch plan.
     // Uses deep fetching (product_id.*) to get product names.
     final res = await _api.getJson(
       "/items/$_dpDetailsCollection",
@@ -169,10 +165,19 @@ class DispatchPlanRepository {
         "filter[dispatch_id][_eq]": dispatchId,
         "fields": "id,quantity,unit,product_id.product_id,product_id.product_name",
       },
+      allow403: true,
     );
 
+    // Check if API returned an error (e.g., 403 Forbidden)
+    if (res.containsKey("error")) {
+      debugPrint(
+        "⚠️ PERMISSION ERROR: User cannot read 'dispatch_plan_details'. Please grant Read access in Directus.",
+      );
+      return [];
+    }
+
     final List data = (res["data"] as List?) ?? [];
-    
+
     return data.map((row) {
       final map = row as Map;
       final prod = map["product_id"] as Map? ?? {};
@@ -228,17 +233,14 @@ class DispatchPlanRepository {
       // 4. Create Link (Bridge Table)
       await _api.postJson(
         "/items/consolidator_dispatches",
-        body: {
-          "consolidator_id": consolidatorId,
-          "dispatch_no": dispatchNo
-        },
+        body: {"consolidator_id": consolidatorId, "dispatch_no": dispatchNo},
       );
 
       // 5. Populate Consolidator Details
       // We fetch the items from the plan and move them to the consolidator
       // so the warehouse team sees them as "To Pick".
       final planItems = await fetchDispatchPlanItems(dispatchId);
-      
+
       if (planItems.isNotEmpty) {
         final detailsPayload = planItems.map((item) {
           return {
@@ -259,29 +261,22 @@ class DispatchPlanRepository {
           // Fallback: One-by-one insert if bulk fails
           print("Bulk insert failed. Retrying individually: $e");
           for (final payload in detailsPayload) {
-             try {
-               await _api.postJson("/items/consolidator_details", body: payload);
-             } catch (_) {}
+            try {
+              await _api.postJson("/items/consolidator_details", body: payload);
+            } catch (_) {}
           }
         }
       }
 
       // 6. Finalize: Update Dispatch Status
       await _updateDispatchStatus(dispatchId, "Approved");
-      
-      return ApproveResult(
-        consolidatorId: consolidatorId,
-        consolidatorNo: consolidatorNo
-      );
 
+      return ApproveResult(consolidatorId: consolidatorId, consolidatorNo: consolidatorNo);
     } catch (e) {
-      // ROLLBACK STRATEGY: 
-      // If the linking or detail population fails, we must delete the 
+      // ROLLBACK STRATEGY:
+      // If the linking or detail population fails, we must delete the
       // 'consolidator' record we just made to prevent orphaned data.
-      await _safeCleanupOrphans(
-        consolidatorId: consolidatorId, 
-        dispatchNo: dispatchNo
-      );
+      await _safeCleanupOrphans(consolidatorId: consolidatorId, dispatchNo: dispatchNo);
       rethrow;
     }
   }
@@ -370,16 +365,13 @@ class DispatchPlanRepository {
   Future<int> _allocateNextDispatchNumber() async {
     final row = await _getPickListRowWithFallbacks();
     final current = _asInt(row["consolidation_no_dispatch"]);
-    
+
     if (current == null) {
       throw Exception("pick_list_no row is missing 'consolidation_no_dispatch'.");
     }
 
     final next = current + 1;
-    await _api.patch(
-      "/items/pick_list_no/$_pickListPk", 
-      data: {"consolidation_no_dispatch": next}
-    );
+    await _api.patch("/items/pick_list_no/$_pickListPk", data: {"consolidation_no_dispatch": next});
 
     return next;
   }
@@ -434,17 +426,17 @@ class DispatchPlanRepository {
     // 2. Delete Details (If partial insert happened)
     try {
       final res = await _api.getJson(
-         "/items/consolidator_details",
-         query: {"filter[consolidator_id][_eq]": consolidatorId, "fields": "id"},
+        "/items/consolidator_details",
+        query: {"filter[consolidator_id][_eq]": consolidatorId, "fields": "id"},
       );
       final list = (res["data"] as List?) ?? [];
       for (final item in list) {
         final id = _asInt(item["id"]);
-         if (id != null) {
+        if (id != null) {
           await _api.deleteJson("/items/consolidator_details/$id");
         }
       }
-    } catch(_) {}
+    } catch (_) {}
 
     // 3. Delete Header
     try {

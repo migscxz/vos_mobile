@@ -1,10 +1,10 @@
-// lib/modules/auth/login_page.dart
 import "dart:async";
+import "dart:ui";
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:connectivity_plus/connectivity_plus.dart";
 
-import "../../app_providers.dart"; // authRepositoryProvider
+import "../../app_providers.dart";
 import "../shell/shell.dart";
 
 class LoginPage extends ConsumerStatefulWidget {
@@ -14,122 +14,60 @@ class LoginPage extends ConsumerStatefulWidget {
   ConsumerState<LoginPage> createState() => _LoginPageState();
 }
 
-class _LoginPageState extends ConsumerState<LoginPage> {
+class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
-  final _emailCtrl = TextEditingController();
-  final _passCtrl = TextEditingController();
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
 
-  bool _loading = false;
-  bool _obscure = true;
-  String? _error;
-
+  bool _isLoading = false;
+  bool _isObscured = true;
+  String? _errorMessage;
   bool _isOnline = false;
-  StreamSubscription<dynamic>? _connSub;
+  StreamSubscription<dynamic>? _connectivitySubscription;
+
+  late AnimationController _mainController;
+  late AnimationController _bgController;
 
   @override
   void initState() {
     super.initState();
-    _initConnectivity();
+    _initializeConnectivity();
+    
+    _mainController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2000),
+    );
+
+    _bgController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 10),
+    )..repeat(reverse: true);
+
+    _mainController.forward();
   }
 
-  Future<void> _initConnectivity() async {
+  void _initializeConnectivity() async {
     final connectivity = Connectivity();
-
     final initial = await connectivity.checkConnectivity();
     _applyConnectivity(initial);
-
-    _connSub = connectivity.onConnectivityChanged.listen(_applyConnectivity);
+    _connectivitySubscription = connectivity.onConnectivityChanged.listen(_applyConnectivity);
   }
 
   void _applyConnectivity(dynamic result) {
-    bool online;
-
-    if (result is List<ConnectivityResult>) {
-      online = result.isNotEmpty && !result.contains(ConnectivityResult.none);
-    } else if (result is ConnectivityResult) {
-      online = result != ConnectivityResult.none;
-    } else {
-      online = false;
-    }
-
-    if (!mounted) {
-      _isOnline = online;
-      return;
-    }
-    setState(() => _isOnline = online);
+    bool online = result is List<ConnectivityResult>
+        ? (result.isNotEmpty && !result.contains(ConnectivityResult.none))
+        : (result != ConnectivityResult.none);
+    if (mounted) setState(() => _isOnline = online);
   }
 
   @override
   void dispose() {
-    _connSub?.cancel();
-    _emailCtrl.dispose();
-    _passCtrl.dispose();
+    _connectivitySubscription?.cancel();
+    _emailController.dispose();
+    _passwordController.dispose();
+    _mainController.dispose();
+    _bgController.dispose();
     super.dispose();
-  }
-
-  Future<void> _onLogin() async {
-    final ok = _formKey.currentState?.validate() ?? false;
-    if (!ok) return;
-
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-
-    try {
-      final auth = ref.read(authRepositoryProvider);
-
-      // Offline-first: AuthRepository will try online then fallback to cached users.
-      await auth.login(
-        email: _emailCtrl.text,
-        password: _passCtrl.text,
-      );
-
-      if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const Shell()),
-      );
-    } catch (e) {
-      if (!mounted) return;
-
-      final msg = e.toString();
-      setState(() {
-        // Make the error nicer to read
-        _error = msg.replaceFirst("Exception: ", "");
-      });
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Widget _onlineBadge(ColorScheme cs) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: _isOnline ? cs.primaryContainer : cs.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: cs.outlineVariant.withOpacity(0.5)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            _isOnline ? Icons.wifi_rounded : Icons.wifi_off_rounded,
-            size: 16,
-            color: _isOnline ? cs.primary : cs.onSurfaceVariant,
-          ),
-          const SizedBox(width: 6),
-          Text(
-            _isOnline ? "Online" : "Offline",
-            style: TextStyle(
-              fontWeight: FontWeight.w900,
-              fontSize: 12,
-              color: _isOnline ? cs.primary : cs.onSurfaceVariant,
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   @override
@@ -137,117 +75,230 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Login"),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: Center(child: _onlineBadge(cs)),
+      body: Stack(
+        children: [
+          // Majestic Aurora Background
+          AnimatedBuilder(
+            animation: _bgController,
+            builder: (context, child) {
+              return CustomPaint(
+                painter: AuroraPainter(_bgController.value, cs.primaryContainer, cs.secondaryContainer),
+                child: Container(),
+              );
+            },
+          ),
+          
+          // Main Content
+          SafeArea(
+            child: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 400),
+                  child: Column(
+                    children: [
+                      // _staggeredFade(0.0, 0.4, _buildLogo(cs)),
+                      const SizedBox(height: 24),
+                      _staggeredFade(0.2, 0.6, _buildTitle(cs)),
+                      const SizedBox(height: 32),
+                      _staggeredFade(0.4, 0.8, _buildGlassForm(cs)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ),
         ],
       ),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    "VOS Mobile",
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                          fontWeight: FontWeight.w900,
-                        ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    _isOnline
-                        ? "Sign in to cache your account for offline use."
-                        : "Offline mode: you can sign in only if this account was cached before.",
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: cs.onSurfaceVariant,
-                          fontWeight: FontWeight.w700,
-                        ),
-                  ),
-                  const SizedBox(height: 18),
-                  TextFormField(
-                    controller: _emailCtrl,
-                    keyboardType: TextInputType.emailAddress,
-                    decoration: const InputDecoration(
-                      labelText: "Email",
-                      border: OutlineInputBorder(),
-                    ),
-                    validator: (v) {
-                      final s = (v ?? "").trim();
-                      if (s.isEmpty) return "Email is required";
-                      if (!s.contains("@")) return "Invalid email";
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _passCtrl,
-                    obscureText: _obscure,
-                    decoration: InputDecoration(
-                      labelText: "Password",
-                      border: const OutlineInputBorder(),
-                      suffixIcon: IconButton(
-                        onPressed: () => setState(() => _obscure = !_obscure),
-                        icon: Icon(_obscure ? Icons.visibility : Icons.visibility_off),
-                      ),
-                    ),
-                    validator: (v) {
-                      final s = (v ?? "").trim();
-                      if (s.isEmpty) return "Password is required";
-                      return null;
-                    },
-                  ),
-                  if (_error != null) ...[
-                    const SizedBox(height: 12),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: cs.errorContainer,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        _error!,
-                        style: TextStyle(
-                          color: cs.onErrorContainer,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 52,
-                    child: FilledButton(
-                      onPressed: _loading ? null : _onLogin,
-                      child: _loading
-                          ? const SizedBox(
-                              width: 22,
-                              height: 22,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Text(
-                              "Login",
-                              style: TextStyle(fontWeight: FontWeight.w900),
-                            ),
-                    ),
-                  ),
-                ],
-              ),
+    );
+  }
+
+  Widget _staggeredFade(double start, double end, Widget child) {
+    return FadeTransition(
+      opacity: CurvedAnimation(
+        parent: _mainController,
+        curve: Interval(start, end, curve: Curves.easeIn),
+      ),
+      child: SlideTransition(
+        position: Tween<Offset>(begin: const Offset(0, 0.1), end: Offset.zero).animate(
+          CurvedAnimation(parent: _mainController, curve: Interval(start, end, curve: Curves.easeOutCubic)),
+        ),
+        child: child,
+      ),
+    );
+  }
+
+  // Widget _buildLogo(ColorScheme cs) {
+  //   return Hero(
+  //     tag: 'logo',
+  //     child: Container(
+  //       height: 80,
+  //       width: 80,
+  //       decoration: BoxDecoration(
+  //         color: Colors.white.withOpacity(0.9),
+  //         shape: BoxShape.circle,
+  //         boxShadow: [
+  //           BoxShadow(color: cs.primary.withOpacity(0.2), blurRadius: 30, spreadRadius: 10),
+  //         ],
+  //       ),
+  //       child: Icon(Icons.vignette_rounded, size: 40, color: cs.primary),
+  //     ),
+  //   );
+  // }
+
+  Widget _buildTitle(ColorScheme cs) {
+    return Column(
+      children: [
+        Text(
+          "VOS Mobile",
+          style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+            fontWeight: FontWeight.w900,
+            color: cs.onSurface,
+            letterSpacing: -1,
+          ),
+        ),
+        const SizedBox(height: 8),
+        _buildStatusBadge(cs),
+      ],
+    );
+  }
+
+  Widget _buildGlassForm(ColorScheme cs) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(32),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+        child: Container(
+          padding: const EdgeInsets.all(28),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.7),
+            borderRadius: BorderRadius.circular(32),
+            border: Border.all(color: Colors.white.withOpacity(0.5)),
+          ),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              children: [
+                _buildField(controller: _emailController, label: "Email", icon: Icons.mail_outline_rounded, cs: cs),
+                const SizedBox(height: 16),
+                _buildField(
+                  controller: _passwordController,
+                  label: "Password",
+                  icon: Icons.lock_open_rounded,
+                  cs: cs,
+                  isPassword: true,
+                ),
+                if (_errorMessage != null) _buildError(cs),
+                const SizedBox(height: 24),
+                _buildSubmitButton(cs),
+              ],
             ),
           ),
         ),
       ),
     );
   }
+
+  Widget _buildField({required TextEditingController controller, required String label, required IconData icon, required ColorScheme cs, bool isPassword = false}) {
+    return TextFormField(
+      controller: controller,
+      obscureText: isPassword && _isObscured,
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon, size: 20),
+        suffixIcon: isPassword ? IconButton(
+          icon: Icon(_isObscured ? Icons.visibility_off_rounded : Icons.visibility_rounded),
+          onPressed: () => setState(() => _isObscured = !_isObscured),
+        ) : null,
+        filled: true,
+        fillColor: Colors.white.withOpacity(0.5),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+      ),
+    );
+  }
+
+  Widget _buildSubmitButton(ColorScheme cs) {
+    return SizedBox(
+      width: double.infinity,
+      height: 58,
+      child: ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: cs.primary,
+          foregroundColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          elevation: 8,
+          shadowColor: cs.primary.withOpacity(0.4),
+        ),
+        onPressed: _isLoading ? null : _handleLogin,
+        child: _isLoading 
+          ? const CircularProgressIndicator(color: Colors.white, strokeWidth: 2) 
+          : const Text("Continue", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+      ),
+    );
+  }
+
+  Widget _buildStatusBadge(ColorScheme cs) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      decoration: BoxDecoration(
+        color: _isOnline ? Colors.green.withOpacity(0.1) : Colors.orange.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _isOnline ? Colors.green.withOpacity(0.2) : Colors.orange.withOpacity(0.2)),
+      ),
+      child: Text(
+        _isOnline ? "• Connected" : "• Offline Mode",
+        style: TextStyle(fontSize: 11, color: _isOnline ? Colors.green : Colors.orange, fontWeight: FontWeight.bold),
+      ),
+    );
+  }
+
+  Widget _buildError(ColorScheme cs) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Text(_errorMessage!, style: TextStyle(color: cs.error, fontSize: 12, fontWeight: FontWeight.w600)),
+    );
+  }
+
+  Future<void> _handleLogin() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    setState(() { _isLoading = true; _errorMessage = null; });
+    try {
+      await ref.read(authRepositoryProvider).login(email: _emailController.text, password: _passwordController.text);
+      if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const Shell()));
+    } catch (e) {
+      if (mounted) setState(() => _errorMessage = e.toString().replaceFirst("Exception: ", ""));
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+}
+
+class AuroraPainter extends CustomPainter {
+  final double animationValue;
+  final Color color1;
+  final Color color2;
+
+  AuroraPainter(this.animationValue, this.color1, this.color2);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..maskFilter = const MaskFilter.blur(BlurStyle.normal, 50);
+
+    paint.color = color1.withOpacity(0.4);
+    canvas.drawCircle(
+      Offset(size.width * 0.2 + (animationValue * 50), size.height * 0.2 + (animationValue * 100)),
+      size.width * 0.6,
+      paint,
+    );
+
+    paint.color = color2.withOpacity(0.3);
+    canvas.drawCircle(
+      Offset(size.width * 0.8 - (animationValue * 50), size.height * 0.8 - (animationValue * 100)),
+      size.width * 0.7,
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant AuroraPainter oldDelegate) => true;
 }

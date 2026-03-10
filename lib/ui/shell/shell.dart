@@ -58,7 +58,7 @@ class Shell extends ConsumerWidget {
       case Module.reports:
         return const ReportsPanel();
       case Module.approvals:
-        return const ApprovalsPanel();
+        // return const ApprovalsPanel();
       case Module.chats:
       case Module.profile:
       case Module.dashboard:

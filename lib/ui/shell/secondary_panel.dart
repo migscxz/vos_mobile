@@ -18,7 +18,7 @@ class SecondaryPanel extends ConsumerWidget {
       case Module.chats:
         return const ChatsPanel();
       case Module.approvals:
-        return const ApprovalsPanel();
+        // return const ApprovalsPanel();
       case Module.profile:
         return const _ProfilePanel();
     }
