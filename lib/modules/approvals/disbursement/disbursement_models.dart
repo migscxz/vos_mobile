@@ -50,6 +50,7 @@ class DisbursementHeader {
   final DateTime? dateApproved;
 
   final String remarks;
+  final int transactionType;
 
   const DisbursementHeader({
     required this.id,
@@ -64,10 +65,32 @@ class DisbursementHeader {
     required this.approverId,
     required this.dateApproved,
     required this.remarks,
+    required this.transactionType,
   });
 
   bool get isApproved => (approverId != null) && (dateApproved != null);
   bool get isPending => !isApproved;
+}
+
+class DisbursementThreshold {
+  final int id;
+  final double threshold;
+  final int transactionType;
+
+  const DisbursementThreshold({
+    required this.id,
+    required this.threshold,
+    required this.transactionType,
+  });
+
+  factory DisbursementThreshold.fromJson(Map<String, dynamic> json) {
+    return DisbursementThreshold(
+      id: int.tryParse(json["id"]?.toString() ?? "") ?? 0,
+      threshold: double.tryParse(json["threshold"]?.toString() ?? "") ?? 0.0,
+      transactionType:
+          int.tryParse(json["transaction_type"]?.toString() ?? "") ?? 0,
+    );
+  }
 }
 
 class DisbursementPayableRow {

@@ -51,6 +51,7 @@ class SyncRepository {
   /// If the base URL changed, wipe local tables once.
   Future<void> _resetIfServerBaseChanged() async {
     final db = await _db;
+
     await db.execute('''
       CREATE TABLE IF NOT EXISTS kv_store (
         k TEXT PRIMARY KEY,
@@ -59,17 +60,24 @@ class SyncRepository {
     ''');
 
     final base = api.baseUrl; // <-- keep exactly this
-    final rows = await db.query('kv_store', where: 'k = ?', whereArgs: ['api_base']);
+    final rows = await db.query(
+      'kv_store',
+      where: 'k = ?',
+      whereArgs: ['api_base'],
+      limit: 1,
+    );
     final saved = rows.isNotEmpty ? rows.first['v'] as String? : null;
 
     if (saved == null || saved != base) {
       // Different server (or first run) → wipe local rows to avoid mixing.
-      await wipeLocal();
-      await db.insert(
-        'kv_store',
-        {'k': 'api_base', 'v': base},
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+      await db.transaction((txn) async {
+        await _wipeLocalWithExecutor(txn);
+        await txn.insert(
+          'kv_store',
+          {'k': 'api_base', 'v': base},
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      });
     }
   }
 
@@ -80,10 +88,15 @@ class SyncRepository {
   /// Drop data (not schema) from all local tables used by sync.
   Future<void> wipeLocal() async {
     final db = await _db;
+    await _wipeLocalWithExecutor(db);
+  }
 
+  Future<void> _wipeLocalWithExecutor(DatabaseExecutor exec) async {
     // Discover which tables actually exist so we don't crash
-    final existingRows = await db.rawQuery("SELECT name FROM sqlite_master WHERE type = 'table'");
-    final existingTables = existingRows.map((e) => (e['name'] as String?) ?? '').toSet();
+    final existingRows =
+    await exec.rawQuery("SELECT name FROM sqlite_master WHERE type = 'table'");
+    final existingTables =
+    existingRows.map((e) => (e['name'] as String?) ?? '').toSet();
 
     final tables = <String>[
       // Delivery
@@ -153,17 +166,42 @@ class SyncRepository {
       'unfulfilled_sales_transaction_details',
     ];
 
-    final batch = db.batch();
-    for (final t in tables) {
-      if (existingTables.contains(t)) {
-        batch.delete(t);
+    // If foreign keys are enabled and your schema has them,
+    // deletes may fail depending on order. Temporarily disable FK checks.
+    // (Safe even if you don’t use FKs; SQLite will just accept it.)
+    try {
+      await exec.execute('PRAGMA foreign_keys = OFF;');
+    } catch (_) {
+      // ignore
+    }
+
+    final batch = (exec is Database) ? exec.batch() : null;
+
+    if (batch != null) {
+      for (final t in tables) {
+        if (existingTables.contains(t)) {
+          batch.delete(t);
+        }
+      }
+      await batch.commit(noResult: true);
+    } else {
+      // inside a txn: use raw deletes sequentially (no batch API available here)
+      for (final t in tables) {
+        if (existingTables.contains(t)) {
+          await exec.delete(t);
+        }
       }
     }
-    await batch.commit(noResult: true);
+
+    try {
+      await exec.execute('PRAGMA foreign_keys = ON;');
+    } catch (_) {
+      // ignore
+    }
   }
 
   // -----------------------------
-  // SAFE PURGE (FIXED)
+  // SAFE PURGE (FIXED + CHUNKED)
   // -----------------------------
 
   bool _isSafeIdent(String s) {
@@ -172,28 +210,9 @@ class SyncRepository {
     return re.hasMatch(s);
   }
 
-  Future<String> _inferPkSqliteType(DatabaseExecutor exec, String table, String pk) async {
-    // Default to TEXT if we cannot infer.
-    try {
-      final info = await exec.rawQuery('PRAGMA table_info($table)');
-      for (final row in info) {
-        final name = row['name']?.toString();
-        if (name == pk) {
-          final t = (row['type']?.toString() ?? '').toUpperCase();
-          if (t.contains('INT')) return 'INTEGER';
-          if (t.contains('CHAR') || t.contains('CLOB') || t.contains('TEXT')) return 'TEXT';
-          return t.isEmpty ? 'TEXT' : t;
-        }
-      }
-    } catch (_) {
-      // ignore
-    }
-    return 'TEXT';
-  }
-
   /// Remove local rows whose primary key is NOT in [remoteIds].
   ///
-  /// FIX: Uses a TEMP table + chunked inserts, then deletes using NOT IN (select)
+  /// Uses a TEMP table + chunked inserts, then deletes using NOT IN (select)
   /// so the DELETE statement has 0 bound variables (avoids "too many SQL variables").
   Future<void> _purgeNotIn({
     required String table,
@@ -224,15 +243,22 @@ class SyncRepository {
       await txn.execute('DROP TABLE IF EXISTS $tmp;');
       await txn.execute('CREATE TEMP TABLE $tmp (id TEXT PRIMARY KEY);');
 
-      final batch = txn.batch();
-      for (final id in ids) {
-        batch.insert(
-          tmp,
-          {'id': id},
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
+      // Chunk inserts to keep memory and transaction batching stable for huge datasets.
+      const chunkSize = 500;
+      for (var start = 0; start < ids.length; start += chunkSize) {
+        final end = (start + chunkSize < ids.length) ? start + chunkSize : ids.length;
+        final chunk = ids.sublist(start, end);
+
+        final batch = txn.batch();
+        for (final id in chunk) {
+          batch.insert(
+            tmp,
+            {'id': id},
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
+        }
+        await batch.commit(noResult: true);
       }
-      await batch.commit(noResult: true);
 
       await txn.execute('''
         DELETE FROM $table
@@ -250,7 +276,7 @@ class SyncRepository {
   /// Original sync (NO progress). Used by app init.
   /// Set [purge]=true to drop local rows not present on server.
   ///
-  /// UPDATED: Run sequentially (no Future.wait) to avoid sqlite "database locked"
+  /// Runs sequentially (no Future.wait) to avoid sqlite "database locked"
   /// and to keep write transactions predictable.
   Future<void> syncAll({bool purge = false}) async {
     await _resetIfServerBaseChanged();
@@ -323,8 +349,10 @@ class SyncRepository {
       _SyncTask('Consolidator Details', () => syncConsolidatorDetails(purge: purge)),
       _SyncTask('Consolidator Dispatches', () => syncConsolidatorDispatches(purge: purge)),
       _SyncTask('Dispatch Plan', () => syncDispatchPlan(purge: purge)),
-      _SyncTask('Unfulfilled Sales Transaction', () => syncUnfulfilledSalesTransaction(purge: purge)),
-      _SyncTask('Unfulfilled Sales Transaction Details', () => syncUnfulfilledSalesTransactionDetails(purge: purge)),
+      _SyncTask('Unfulfilled Sales Transaction',
+              () => syncUnfulfilledSalesTransaction(purge: purge)),
+      _SyncTask('Unfulfilled Sales Transaction Details',
+              () => syncUnfulfilledSalesTransactionDetails(purge: purge)),
 
       // Assets & Equipment
       _SyncTask('Assets & Equipment', () => syncAssetsAndEquipment(purge: purge)),
@@ -1734,7 +1762,8 @@ class SyncRepository {
 
   Future<void> syncUnfulfilledSalesTransactionDetails({bool purge = false}) async {
     final db = await _db;
-    final rows = await api.getList('/items/unfulfilled_sales_transaction_details?limit=-1');
+    final rows =
+    await api.getList('/items/unfulfilled_sales_transaction_details?limit=-1');
     final batch = db.batch();
 
     for (final r in rows) {
@@ -1742,7 +1771,8 @@ class SyncRepository {
         'unfulfilled_sales_transaction_details',
         {
           'id': r['id'],
-          'unfulfilled_sales_transaction_id': _asIntNullable(r['unfulfilled_sales_transaction_id']),
+          'unfulfilled_sales_transaction_id':
+          _asIntNullable(r['unfulfilled_sales_transaction_id']),
           'sales_invoice_detail_id': _asIntNullable(r['sales_invoice_detail_id']),
           'missing_quantity': _asDouble(r['missing_quantity']),
         },
@@ -1840,26 +1870,26 @@ class SyncRepository {
     final batch = db.batch();
     for (final r in rows) {
       batch.insert(
-          'disbursement',
-          {
-            'id': r['id'],
-            'doc_no': r['doc_no'],
-            'transaction_date': r['transaction_date'],
-            'encoder_id': r['encoder_id'],
-            'approver_id': r['approver_id'],
-            'date_approved': r['date_approved'],
-            'date_created': r['date_created'],
-            'date_posted': r['date_posted'],
-            'date_updated': r['date_updated'],
-            'division_id': r['division_id'],
-            'payee': r['payee'],
-            'total_amount': _asDouble(r['total_amount']),
-            'paid_amount': _asDouble(r['paid_amount']),
-            'isPosted': _asBoolToInt(r['isPosted']),
-            'posted_by': r['posted_by'],
-            'remarks': r['remarks'],
-            'transaction_type': r['transaction_type'],
-          },
+        'disbursement',
+        {
+          'id': r['id'],
+          'doc_no': r['doc_no'],
+          'transaction_date': r['transaction_date'],
+          'encoder_id': r['encoder_id'],
+          'approver_id': r['approver_id'],
+          'date_approved': r['date_approved'],
+          'date_created': r['date_created'],
+          'date_posted': r['date_posted'],
+          'date_updated': r['date_updated'],
+          'division_id': r['division_id'],
+          'payee': r['payee'],
+          'total_amount': _asDouble(r['total_amount']),
+          'paid_amount': _asDouble(r['paid_amount']),
+          'isPosted': _asBoolToInt(r['isPosted']),
+          'posted_by': r['posted_by'],
+          'remarks': r['remarks'],
+          'transaction_type': r['transaction_type'],
+        },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     }
@@ -2022,9 +2052,7 @@ class SyncRepository {
     final where = <String>[];
     final args = <Object?>[];
 
-    String iso(DateTime d) =>
-        DateFormat('yyyy-MM-dd').format(d);
-    String _iso(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
+    String iso(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
 
     if (search != null && search.trim().isNotEmpty) {
       where.add('a.vendor LIKE ?');
@@ -2180,9 +2208,7 @@ class SyncRepository {
   }) async {
     final db = await _db;
     final args = <Object?>[];
-    String iso(DateTime d) =>
-        DateFormat('yyyy-MM-dd').format(d);
-    String _iso(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
+    String iso(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
 
     final base = '''
       SELECT
@@ -2254,9 +2280,7 @@ class SyncRepository {
   }) async {
     final db = await _db;
     final args = <Object?>[];
-    String iso(DateTime d) =>
-        DateFormat('yyyy-MM-dd').format(d);
-    String _iso(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
+    String iso(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
 
     final base = '''
       SELECT
@@ -2322,9 +2346,7 @@ class SyncRepository {
     int offset = 0,
   }) async {
     final db = await _db;
-    String iso(DateTime d) =>
-        DateFormat('yyyy-MM-dd').format(d);
-    String _iso(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
+    String iso(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
 
     final whereParts = <String>[];
     final params = <Object?>[];

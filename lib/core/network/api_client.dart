@@ -1,4 +1,3 @@
-
 import "package:dio/dio.dart";
 
 class ApiClient {
@@ -9,7 +8,7 @@ class ApiClient {
 
   factory ApiClient({
     String baseUrl = "http://goatedcodoer:8056",
-    String? token,
+    String? token = "AAKv73dkIV8DfAIA5vEt3eXVdIebzmBW",
   }) {
     final dio = Dio(
       BaseOptions(
@@ -44,14 +43,23 @@ class ApiClient {
   Future<Map<String, dynamic>> getJson(
     String path, {
     Map<String, dynamic>? query,
+    bool allow403 = false,
   }) async {
     try {
       final res = await _dio.get(path, queryParameters: query);
       // ignore: avoid_print
       print("GET $baseUrl$path → status: ${res.statusCode}");
 
+      if (allow403 && res.statusCode == 403) {
+        return {
+          "error": "403 Forbidden – Check token or permissions.",
+          "data": res.data,
+        };
+      }
       if (res.statusCode == 401) {
-        throw Exception("401 Unauthorized – Invalid credentials or token expired.");
+        throw Exception(
+          "401 Unauthorized – Invalid credentials or token expired.",
+        );
       }
       if (res.statusCode == 403) {
         throw Exception("403 Forbidden – Check token or permissions.");
@@ -95,7 +103,9 @@ class ApiClient {
       print("GET $baseUrl$path → status: ${res.statusCode}");
 
       if (res.statusCode == 401) {
-        throw Exception("401 Unauthorized – Invalid credentials or token expired.");
+        throw Exception(
+          "401 Unauthorized – Invalid credentials or token expired.",
+        );
       }
       if (res.statusCode == 403) {
         throw Exception("403 Forbidden – Check token or permissions.");
@@ -143,7 +153,9 @@ class ApiClient {
       print("POST $baseUrl$path → status: ${res.statusCode}");
 
       if (res.statusCode == 401) {
-        throw Exception("401 Unauthorized – Invalid credentials or token expired.");
+        throw Exception(
+          "401 Unauthorized – Invalid credentials or token expired.",
+        );
       }
       if (res.statusCode == 403) {
         throw Exception("403 Forbidden – Check token or permissions.");
@@ -186,9 +198,13 @@ class ApiClient {
       final res = await _dio.patch(path, data: body, queryParameters: query);
       // ignore: avoid_print
       print("PATCH $baseUrl$path → status: ${res.statusCode}");
+      // ignore: avoid_print
+      print("DEBUG ALL HEADERS: ${_dio.options.headers}");
 
       if (res.statusCode == 401) {
-        throw Exception("401 Unauthorized – Invalid credentials or token expired.");
+        throw Exception(
+          "401 Unauthorized – Invalid credentials or token expired.",
+        );
       }
       if (res.statusCode == 403) {
         throw Exception("403 Forbidden – Check token or permissions.");
@@ -232,17 +248,16 @@ class ApiClient {
     return res; // Return the full response if data is not a map
   }
 
-  Future<void> deleteJson(
-    String path, {
-    Map<String, dynamic>? query,
-  }) async {
+  Future<void> deleteJson(String path, {Map<String, dynamic>? query}) async {
     try {
       final res = await _dio.delete(path, queryParameters: query);
       // ignore: avoid_print
       print("DELETE $baseUrl$path → status: ${res.statusCode}");
 
       if (res.statusCode == 401) {
-        throw Exception("401 Unauthorized – Invalid credentials or token expired.");
+        throw Exception(
+          "401 Unauthorized – Invalid credentials or token expired.",
+        );
       }
       if (res.statusCode == 403) {
         throw Exception("403 Forbidden – Check token or permissions.");

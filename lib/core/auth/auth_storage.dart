@@ -40,11 +40,11 @@ class AuthStorage {
   static const _kCachedUsers = "auth.cached_users";
 
   // ---- Seeder: offline default account ----
-  static const int _seedUserId = 207;
-  static const String _seedEmail = "norman_delfin@men2corp.com";
-  static const String _seedPassword = "delfin123";
-  static const String _seedFname = "Norman";
-  static const String _seedLname = "Delfin";
+  static const int _seedUserId = 176;
+  static const String _seedEmail = "carcha_zarina@men2corp.com";
+  static const String _seedPassword = "zcc1190029";
+  static const String _seedFname = "Zarina";
+  static const String _seedLname = "Carcha";
 
   static String hashPassword(String plain) {
     final bytes = utf8.encode(plain);

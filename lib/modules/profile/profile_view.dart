@@ -1,31 +1,17 @@
 // lib/modules/profile/profile_view.dart
-import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:vos_mobile/app_providers.dart'; // authRepositoryProvider
-import '../../ui/auth/auth_gate.dart'; // AuthGate
-import 'package:vos_mobile/state/accounts_payable/accounts_payable_state.dart';
-import 'package:vos_mobile/state/accounts_receivable_state/account_receivable_state.dart';
-import 'package:vos_mobile/state/data_providers.dart';
-import 'package:vos_mobile/state/delivery_report/delivery_report_state.dart';
-// NEW: Sales Report (Riverpod) providers.
-import 'package:vos_mobile/state/sales_report/sales_report_providers.dart';
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 
-// Existing repos + states
-import "package:vos_mobile/state/data_providers.dart";
-import "package:vos_mobile/state/accounts_receivable_state/account_receivable_state.dart";
+import "package:vos_mobile/app_providers.dart"; // authRepositoryProvider
+import "package:vos_mobile/state/data_providers.dart"; // syncRepoProvider, etc.
 import "package:vos_mobile/state/accounts_payable/accounts_payable_state.dart";
+import "package:vos_mobile/state/accounts_receivable_state/account_receivable_state.dart";
 import "package:vos_mobile/state/delivery_report/delivery_report_state.dart";
-
-// Sales Report providers
 import "package:vos_mobile/state/sales_report/sales_report_providers.dart";
-
-// NEW: Disbursement (Riverpod) providers
 import "package:vos_mobile/state/disbursement/disbursement_providers.dart";
+import "package:vos_mobile/state/inventory_report/inventory_providers.dart";
 
-// NEW: Inventory (Riverpod) providers
-import 'package:vos_mobile/state/inventory_report/inventory_providers.dart';
+import "../../ui/auth/auth_gate.dart"; // AuthGate
 
 class ProfileView extends ConsumerStatefulWidget {
   const ProfileView({super.key});
@@ -56,38 +42,23 @@ class _ProfileViewState extends ConsumerState<ProfileView> {
     await ref.read(arNotifierProvider.notifier).refresh();
 
     // ---------------- Sales Report --------------------
-    ref.invalidate(salesReportRowsProvider); // paged/filtered v_sales_report rows
-    ref.invalidate(salesReportMetricsProvider); // totals (sales, collection, returns, discounts)
-    ref.invalidate(salesReportFiltersProvider); // current filter state/presets
-    ref.invalidate(salesReportBranchesProvider); // distinct branches
-    ref.invalidate(salesReportSalesmenProvider); // distinct salesmen
-    ref.invalidate(salesReportPaymentStatusesProvider); // distinct payment_status
-    ref.invalidate(salesmanDirectoryProvider); // full salesman table
-    ref.invalidate(paymentTermsDirectoryProvider); // payment_terms endpoint
-    ref.invalidate(operationDirectoryProvider); // operation endpoint
-    ref.invalidate(invoiceTypeDirectoryProvider); // sales_invoice_type endpoint
-    ref.invalidate(salesReturnDirectoryProvider); // sales_return endpoint
+    ref.invalidate(salesReportRowsProvider);
+    ref.invalidate(salesReportMetricsProvider);
+    ref.invalidate(salesReportFiltersProvider);
+    ref.invalidate(salesReportBranchesProvider);
+    ref.invalidate(salesReportSalesmenProvider);
+    ref.invalidate(salesReportPaymentStatusesProvider);
+    ref.invalidate(salesmanDirectoryProvider);
+    ref.invalidate(paymentTermsDirectoryProvider);
+    ref.invalidate(operationDirectoryProvider);
+    ref.invalidate(invoiceTypeDirectoryProvider);
+    ref.invalidate(salesReturnDirectoryProvider);
 
-    // ---------------- Disbursement Report (NEW) --------
-    //
-    // Your DisbursementView is now driven by the controller/provider.
-    // Invalidating this forces a clean reload from local DB (or API, depending on your repository).
+    // ---------------- Disbursement Report -------------
     ref.invalidate(disbursementControllerProvider);
 
-    // ---------------- Inventory Report (NEW) -----------
-    // Forces a clean reload the next time the InventoryView is opened.
-    // If you later wire InventoryView to auto-load on init, this is enough.
+    // ---------------- Inventory Report ----------------
     ref.invalidate(inventoryReportProvider);
-
-    // ---------------- Assets & Equipment (OPTIONAL) ----
-    // If you have Riverpod providers for your assets/equipment views,
-    // invalidate them here so they refresh after sync.
-    //
-    // Example (adjust to your actual provider names):
-    // ref.invalidate(assetsAndEquipmentProvider);
-    // ref.invalidate(itemTypeDirectoryProvider);
-    // ref.invalidate(itemsDirectoryProvider);
-    // ref.invalidate(assetsDepartmentDirectoryProvider);
   }
 
   Future<void> _syncNow({bool fullReset = false}) async {
@@ -103,38 +74,32 @@ class _ProfileViewState extends ConsumerState<ProfileView> {
       final repo = ref.read(syncRepoProvider);
 
       if (fullReset) {
-        // Hard wipe before progress sync
         await repo.wipeLocal();
       }
 
-      // Progress-aware sync
       final errors = await repo.syncAllWithProgress(
         purge: true,
         onProgress: (progress) {
           if (!mounted) return;
           setState(() {
-            _progressLabel = '(${progress.step}/${progress.total}) ${progress.label}';
-            _progressLabel = "(${progress.step}/${progress.total}) ${progress.label}";
-            _progressValue = progress.total == 0 ? null : progress.step / progress.total;
+            _progressLabel =
+            "(${progress.step}/${progress.total}) ${progress.label}";
+            _progressValue = progress.total == 0
+                ? null
+                : (progress.step / progress.total);
           });
         },
       );
 
-      // Now that data is fresh, rebuild read models
       await _refreshReadModels();
 
       if (!mounted) return;
 
-      final baseMsg = fullReset ? 'Full reseed completed.' : 'Sync completed.';
       final baseMsg = fullReset ? "Full reseed completed." : "Sync completed.";
       final errorMsg = errors.isEmpty
           ? ""
           : " (${errors.length} task${errors.length == 1 ? "" : "s"} had issues – see logs.)";
 
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$baseMsg$errorMsg')));
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Sync failed: $e')));
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("$baseMsg$errorMsg")),
       );
@@ -158,11 +123,14 @@ class _ProfileViewState extends ConsumerState<ProfileView> {
       final authRepo = ref.read(authRepositoryProvider);
       await authRepo.logout();
 
-      // Navigate to the auth gate, which will show login page since session is cleared
-      Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const AuthGate()));
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const AuthGate()),
+      );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Logout failed: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Logout failed: $e")),
+      );
     }
   }
 
@@ -178,47 +146,49 @@ class _ProfileViewState extends ConsumerState<ProfileView> {
           const SizedBox(height: 10),
           Text("Your Profile", style: theme.textTheme.titleLarge),
           const SizedBox(height: 4),
-          Text('Manage account settings and preferences', style: theme.textTheme.bodySmall),
-          const SizedBox(height: 16),
-          Tooltip(
-            message: 'Tap: normal sync (purge)\nLong-press: full reseed (wipe local cache)',
           Text(
             "Manage account settings and preferences",
             style: theme.textTheme.bodySmall,
           ),
           const SizedBox(height: 16),
+
           Tooltip(
-            message: "Tap: normal sync (purge)\nLong-press: full reseed (wipe local cache)",
+            message:
+            "Tap: normal sync (purge)\nLong-press: full reseed (wipe local cache)",
             child: GestureDetector(
               onLongPress: _isSyncing ? null : () => _syncNow(fullReset: true),
               child: FilledButton.icon(
                 onPressed: _isSyncing ? null : () => _syncNow(),
                 icon: _isSyncing
                     ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
                     : const Icon(Icons.sync),
                 label: Text(_isSyncing ? "Syncing…" : "Sync Now"),
               ),
             ),
           ),
+
           const SizedBox(height: 16),
+
           FilledButton.icon(
             onPressed: _logout,
             icon: const Icon(Icons.logout),
-            label: const Text('Logout'),
+            label: const Text("Logout"),
             style: FilledButton.styleFrom(
               backgroundColor: Colors.red,
               foregroundColor: Colors.white,
             ),
           ),
 
-          // Progress bar + label while syncing
           if (_isSyncing) ...[
             const SizedBox(height: 16),
-            SizedBox(width: 260, child: LinearProgressIndicator(value: _progressValue)),
+            SizedBox(
+              width: 260,
+              child: LinearProgressIndicator(value: _progressValue),
+            ),
             const SizedBox(height: 8),
             Text(
               _progressLabel ?? "Syncing…",

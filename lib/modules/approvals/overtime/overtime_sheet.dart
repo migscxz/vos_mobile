@@ -278,7 +278,8 @@ class _OvertimeApprovalSheetState extends ConsumerState<OvertimeApprovalSheet> {
                 ApprovalActionButtons(
                   onReject: _reject,
                   onApprove: _approve,
-                  isProcessing: _processing,
+                  isProcessing: _processing, rejectText: '', approveText: '', rejectEnabled: !_processing, approveEnabled: !_processing
+,
                 ),
               ],
             ),

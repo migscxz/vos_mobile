@@ -1,8 +1,6 @@
 // lib/modules/disbursement/disbursement_view.dart
 import "dart:async";
 
-class DisbursementView extends StatefulWidget {
-  const DisbursementView({super.key});
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:getwidget/getwidget.dart";
@@ -799,16 +797,6 @@ class _DisbursementViewState extends ConsumerState<DisbursementView> {
                       ],
                     ),
                   ),
-                ),
-                const SizedBox(height: 8),
-
-                // Account Rows
-                ...supplier.accounts.asMap().entries.map((entry) {
-                  final index = entry.key;
-                  final account = entry.value;
-                  return _buildAccountRow(account, index == supplier.accounts.length - 1);
-                }),
-              ],
                   const SizedBox(height: 8),
                   ...disbursement.items
                       .map((i) => _buildItemRowTable(i))

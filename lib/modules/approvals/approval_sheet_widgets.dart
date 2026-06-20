@@ -110,7 +110,7 @@ class ApprovalActionButtons extends StatelessWidget {
     super.key,
     required this.onReject,
     required this.onApprove,
-    required this.isProcessing,
+    required this.isProcessing, required String rejectText, required String approveText, required bool rejectEnabled, required bool approveEnabled,
   });
 
   final VoidCallback? onReject;

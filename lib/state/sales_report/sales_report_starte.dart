@@ -83,35 +83,42 @@ class SalesReportRow {
     this.inCases,
   });
 
-factory SalesReportRow.fromDb(Map<String, Object?> m) {
+  factory SalesReportRow.fromDb(Map<String, Object?> m) {
+    DateTime? parseDate(String? s) {
+      if (s == null || s.isEmpty) return null;
+      try {
+        final t = s.length >= 10 ? s.substring(0, 10) : s;
+        return DateTime.tryParse(s) ?? DateTime.tryParse(t);
+      } catch (_) {
+        return null;
+      }
+    }
 
-  DateTime? parseDate(String? s) {
-    if (s == null || s.isEmpty) return null;
-    final t = s.length >= 10 ? s.substring(0, 10) : s;
-    return DateTime.tryParse(s) ?? DateTime.tryParse(t);
-  }
+    double _num(obj) {
+      if (obj == null) return 0.0;
+      if (obj is num) return obj.toDouble();
+      return double.tryParse(obj.toString()) ?? 0.0;
+    }
 
-  double toDouble(dynamic v) {
-    if (v == null) return 0.0;
-    if (v is int) return v.toDouble();
-    if (v is double) return v;
-    return double.tryParse(v.toString()) ?? 0.0;
-  }
+    double? _numN(obj) {
+      if (obj == null) return null;
+      if (obj is num) return obj.toDouble();
+      return double.tryParse(obj.toString());
+    }
 
-  double? toDoubleN(dynamic v) {
-    if (v == null) return null;
-    if (v is int) return v.toDouble();
-    if (v is double) return v;
-    return double.tryParse(v.toString());
-  }
+    bool _bool(obj) {
+      if (obj == null) return false;
+      if (obj is num) return obj != 0;
+      if (obj is bool) return obj;
+      final s = obj.toString().toLowerCase().trim();
+      return s == '1' || s == 'true' || s == 'y' || s == 'yes';
+    }
 
-  bool parseBool(dynamic v) {
-    if (v == null) return false;
-    if (v is bool) return v;
-    if (v is int) return v != 0;
+    String? _strN(Object? v) => v == null ? null : v.toString();
 
-    final s = v.toString().toLowerCase().trim();
-    return s == '1' || s == 'true' || s == 'y' || s == 'yes';
+    final dispatchedRaw = m['isDispatched'] ?? m['is_dispatched'];
+    final postedRaw = m['isPosted'] ?? m['is_posted'];
+
     return SalesReportRow(
       invoiceNo: (m['invoice_no'] ?? '').toString(),
       invoiceDate: parseDate(m['invoice_date']?.toString()),
@@ -150,49 +157,6 @@ factory SalesReportRow.fromDb(Map<String, Object?> m) {
     );
   }
 
-  String? strN(dynamic v) => v?.toString();
-
-  final dispatchedRaw = m['isDispatched'] ?? m['is_dispatched'];
-  final postedRaw = m['isPosted'] ?? m['is_posted'];
-
-  return SalesReportRow(
-    invoiceNo: (m['invoice_no'] ?? '').toString(),
-    invoiceDate: parseDate(m['invoice_date']?.toString()),
-    customerName: (m['customer_name'] ?? '').toString(),
-    customerAddress: (m['customer_address'] ?? '').toString(),
-    salesman: (m['salesman'] ?? '').toString(),
-    branch: (m['branch'] ?? '').toString(),
-    paymentTerms: (m['payment_terms'] ?? '').toString(),
-    salesType: (m['sales_type'] ?? '').toString(),
-    invoiceType: (m['invoice_type'] ?? '').toString(),
-    transactionStatus: (m['transaction_status'] ?? '').toString(),
-    paymentStatus: (m['payment_status'] ?? '').toString(),
-
-    totalAmount: toDouble(m['total_amount']),
-    discountAmount: toDouble(m['discount_amount']),
-    amount: toDouble(m['amount']),
-    returnAmount: toDouble(m['return_amount_total'] ?? m['return_amount']),
-    collection: toDouble(m['collection']),
-
-    isDispatched: parseBool(dispatchedRaw),
-    isPosted: parseBool(postedRaw),
-
-    productName: strN(m['product_name']),
-    productBrand: strN(m['product_brand']),
-    productCategory: strN(m['product_category']),
-    productSupplier: strN(m['product_supplier']),
-    productUnitPrice: toDoubleN(m['product_unit_price']),
-    productQuantity: toDoubleN(m['product_quantity']),
-    productUnit: strN(m['product_unit']),
-    productDiscountAmount: toDoubleN(m['product_discount_amount']),
-    salesmanDivision: strN(m['salesman_division']),
-    customerProvince: strN(m['customer_province']),
-    customerCity: strN(m['customer_city']),
-    inCases: toDoubleN(m['in_cases']),
-  );
-}
-
- 
   SalesReportRow copyWith({
     String? customerCode,
     double? inCases,
@@ -365,7 +329,7 @@ class SalesReportState extends ChangeNotifier {
   Future<void> refreshFilters() async {
     final db = await AppDb.get();
 
-    Future<List<String>> distinctExpr(String expr) async {
+    Future<List<String>> _distinctExpr(String expr) async {
       final sql = '''
         SELECT DISTINCT $expr AS v
         FROM v_sales_report_itemized
@@ -384,22 +348,22 @@ class SalesReportState extends ChangeNotifier {
     }
 
     // Basic filters
-    branchOptions = ['All Branches', ...await distinctExpr('branch')];
-    salesmanOptions = ['All Salesmen', ...await distinctExpr('salesman')];
+    branchOptions = ['All Branches', ...await _distinctExpr('branch')];
+    salesmanOptions = ['All Salesmen', ...await _distinctExpr('salesman')];
     paymentStatusOptions = [
       'All Status',
-      ...await distinctExpr('payment_status')
+      ...await _distinctExpr('payment_status')
     ];
 
     // Supplier options (schema-aware)
     final avail = _availableSupplierCols();
     List<String> suppliers;
     if (avail.contains('product_supplier')) {
-      suppliers = await distinctExpr('product_supplier');
+      suppliers = await _distinctExpr('product_supplier');
     } else if (avail.isNotEmpty) {
       final set = <String>{};
       for (final c in avail) {
-        set.addAll(await distinctExpr(c));
+        set.addAll(await _distinctExpr(c));
       }
       suppliers = set.toList()
         ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));

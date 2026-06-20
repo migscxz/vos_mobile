@@ -14,10 +14,12 @@ class DisbursementApprovalView extends ConsumerStatefulWidget {
   const DisbursementApprovalView({super.key});
 
   @override
-  ConsumerState<DisbursementApprovalView> createState() => _DisbursementApprovalViewState();
+  ConsumerState<DisbursementApprovalView> createState() =>
+      _DisbursementApprovalViewState();
 }
 
-class _DisbursementApprovalViewState extends ConsumerState<DisbursementApprovalView> {
+class _DisbursementApprovalViewState
+    extends ConsumerState<DisbursementApprovalView> {
   static const int _pageSize = 40;
 
   final TextEditingController _searchCtrl = TextEditingController();
@@ -193,7 +195,8 @@ class _DisbursementApprovalViewState extends ConsumerState<DisbursementApprovalV
     for (final s in suppliers) {
       final id = _asInt(s["id"]);
       if (id == null) continue;
-      supplierNameById[id] = (s["supplier_name"]?.toString() ?? "Unknown Supplier").trim();
+      supplierNameById[id] =
+          (s["supplier_name"]?.toString() ?? "Unknown Supplier").trim();
     }
 
     final userNameById = <int, String>{};
@@ -207,7 +210,9 @@ class _DisbursementApprovalViewState extends ConsumerState<DisbursementApprovalV
       final fn = (u["user_fname"]?.toString() ?? "").trim();
       final mn = (u["user_mname"]?.toString() ?? "").trim();
       final ln = (u["user_lname"]?.toString() ?? "").trim();
-      final name = ("$fn ${mn.isEmpty ? "" : "$mn "} $ln").replaceAll(RegExp(r"\s+"), " ").trim();
+      final name = ("$fn ${mn.isEmpty ? "" : "$mn "} $ln")
+          .replaceAll(RegExp(r"\s+"), " ")
+          .trim();
       if (name.isNotEmpty) userNameById[uid] = name;
     }
 
@@ -221,19 +226,25 @@ class _DisbursementApprovalViewState extends ConsumerState<DisbursementApprovalV
       final encoderId = _asInt(m["encoder_id"]) ?? 0;
       final payeeId = _asInt(m["payee"]) ?? 0;
 
-      final encoderName = encoderId > 0 ? (userNameById[encoderId] ?? "Unknown") : "Unknown";
-      final payeeName = payeeId > 0 ? (supplierNameById[payeeId] ?? "Unknown") : "Unknown";
+      final encoderName = encoderId > 0
+          ? (userNameById[encoderId] ?? "Unknown")
+          : "Unknown";
+      final payeeName = payeeId > 0
+          ? (supplierNameById[payeeId] ?? "Unknown")
+          : "Unknown";
 
       final totalAmount = _asDouble(m["total_amount"]) ?? 0;
       final paidAmount = _asDouble(m["paid_amount"]) ?? 0;
 
       final txDate =
-          _parseDate(m["transaction_date"]?.toString()) ?? DateTime.fromMillisecondsSinceEpoch(0);
+          _parseDate(m["transaction_date"]?.toString()) ??
+          DateTime.fromMillisecondsSinceEpoch(0);
 
       final approverId = _asInt(m["approver_id"]);
       final dateApproved = _parseDateTime(m["date_approved"]?.toString());
 
       final remarks = (m["remarks"]?.toString() ?? "").trim();
+      final transactionType = _asInt(m["transaction_type"]) ?? 0;
 
       _items.add(
         DisbursementHeader(
@@ -249,6 +260,7 @@ class _DisbursementApprovalViewState extends ConsumerState<DisbursementApprovalV
           approverId: approverId,
           dateApproved: dateApproved?.toLocal(),
           remarks: remarks,
+          transactionType: transactionType,
         ),
       );
     }
@@ -279,7 +291,11 @@ class _DisbursementApprovalViewState extends ConsumerState<DisbursementApprovalV
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("Approved ${outcome.docNo} (ID: ${outcome.disbursementId}).")),
+      SnackBar(
+        content: Text(
+          "Approved ${outcome.docNo} (ID: ${outcome.disbursementId}).",
+        ),
+      ),
     );
   }
 
@@ -297,18 +313,27 @@ class _DisbursementApprovalViewState extends ConsumerState<DisbursementApprovalV
             children: [
               const Padding(
                 padding: EdgeInsets.fromLTRB(16, 12, 16, 8),
-                child: Text("Filter", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+                child: Text(
+                  "Filter",
+                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                ),
               ),
               ...DisbursementFilter.values.map((f) {
                 final isSelected = f == _selectedFilter;
                 return ListTile(
                   leading: Icon(
-                    isSelected ? Icons.check_circle_rounded : Icons.circle_outlined,
+                    isSelected
+                        ? Icons.check_circle_rounded
+                        : Icons.circle_outlined,
                     color: isSelected ? cs.primary : cs.onSurfaceVariant,
                   ),
                   title: Text(
                     f.label,
-                    style: TextStyle(fontWeight: isSelected ? FontWeight.w900 : FontWeight.w700),
+                    style: TextStyle(
+                      fontWeight: isSelected
+                          ? FontWeight.w900
+                          : FontWeight.w700,
+                    ),
                   ),
                   onTap: () => Navigator.pop(ctx, f),
                 );
@@ -341,7 +366,11 @@ class _DisbursementApprovalViewState extends ConsumerState<DisbursementApprovalV
               onChanged: _onSearchChanged,
               decoration: InputDecoration(
                 hintText: "Search Doc #, remarks, payee, encoder...",
-                prefixIcon: Icon(Icons.search_rounded, color: cs.primary, size: 20),
+                prefixIcon: Icon(
+                  Icons.search_rounded,
+                  color: cs.primary,
+                  size: 20,
+                ),
                 suffixIcon: _searchCtrl.text.isNotEmpty
                     ? IconButton(
                         icon: const Icon(Icons.cancel, size: 18),
@@ -362,7 +391,10 @@ class _DisbursementApprovalViewState extends ConsumerState<DisbursementApprovalV
               GestureDetector(
                 onTap: _showFilterMenu,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     border: Border.all(color: cs.outlineVariant),
                     borderRadius: BorderRadius.circular(8),
@@ -373,7 +405,10 @@ class _DisbursementApprovalViewState extends ConsumerState<DisbursementApprovalV
                       const SizedBox(width: 8),
                       Text(
                         searching ? "Search Results" : _selectedFilter.label,
-                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                       const Icon(Icons.arrow_drop_down),
                     ],
@@ -432,7 +467,12 @@ class _DisbursementApprovalViewState extends ConsumerState<DisbursementApprovalV
             ),
           ],
         ),
-        actions: [IconButton(icon: const Icon(Icons.refresh), onPressed: () => _resetAndFetch())],
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () => _resetAndFetch(),
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -528,7 +568,11 @@ class _DisbursementCard extends StatelessWidget {
   final bool enabled;
   final VoidCallback onTap;
 
-  const _DisbursementCard({required this.header, required this.enabled, required this.onTap});
+  const _DisbursementCard({
+    required this.header,
+    required this.enabled,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -542,10 +586,16 @@ class _DisbursementCard extends StatelessWidget {
         color: cs.surface,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: enabled ? cs.outlineVariant.withOpacity(0.5) : cs.outlineVariant.withOpacity(0.2),
+          color: enabled
+              ? cs.outlineVariant.withOpacity(0.5)
+              : cs.outlineVariant.withOpacity(0.2),
         ),
         boxShadow: [
-          BoxShadow(color: cs.shadow.withOpacity(0.03), blurRadius: 10, offset: const Offset(0, 4)),
+          BoxShadow(
+            color: cs.shadow.withOpacity(0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
         ],
       ),
       child: Material(
@@ -573,7 +623,9 @@ class _DisbursementCard extends StatelessWidget {
                         ),
                         Text(
                           _formatSimpleDate(header.transactionDate),
-                          style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: cs.onSurfaceVariant,
+                          ),
                         ),
                       ],
                     ),
@@ -592,7 +644,10 @@ class _DisbursementCard extends StatelessWidget {
                     Container(
                       width: 12,
                       height: 12,
-                      decoration: BoxDecoration(color: cs.primary, shape: BoxShape.circle),
+                      decoration: BoxDecoration(
+                        color: cs.primary,
+                        shape: BoxShape.circle,
+                      ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
@@ -601,7 +656,10 @@ class _DisbursementCard extends StatelessWidget {
                         children: [
                           Text(
                             header.payeeName,
-                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -623,7 +681,10 @@ class _DisbursementCard extends StatelessWidget {
                       children: [
                         Text(
                           money(header.totalAmount),
-                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                         Text(
                           "Paid: ${money(header.paidAmount)}",
@@ -715,7 +776,11 @@ class _LoadingMoreIndicator extends StatelessWidget {
   Widget build(BuildContext context) => const Padding(
     padding: EdgeInsets.symmetric(vertical: 24),
     child: Center(
-      child: SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2)),
+      child: SizedBox(
+        width: 24,
+        height: 24,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      ),
     ),
   );
 }
@@ -763,8 +828,13 @@ class _EmptyState extends StatelessWidget {
             Icon(Icons.inbox_rounded, size: 64, color: cs.onSurfaceVariant),
             const SizedBox(height: 12),
             Text(
-              query.trim().isEmpty ? "No disbursements found." : "No results for '$query'.",
-              style: TextStyle(fontWeight: FontWeight.w900, color: cs.onSurface),
+              query.trim().isEmpty
+                  ? "No disbursements found."
+                  : "No results for '$query'.",
+              style: TextStyle(
+                fontWeight: FontWeight.w900,
+                color: cs.onSurface,
+              ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 6),
@@ -800,7 +870,10 @@ class _ErrorState extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               "Failed to load data",
-              style: TextStyle(fontWeight: FontWeight.w900, color: cs.onSurface),
+              style: TextStyle(
+                fontWeight: FontWeight.w900,
+                color: cs.onSurface,
+              ),
             ),
             const SizedBox(height: 10),
             ConstrainedBox(

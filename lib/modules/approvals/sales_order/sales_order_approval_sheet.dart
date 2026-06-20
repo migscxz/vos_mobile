@@ -27,6 +27,9 @@ class _SalesOrderApprovalSheetState
   bool _approving = false;
   String? _error;
 
+  // Selection state (default empty per user request)
+  final Set<int> _selected = {};
+
   repo.SalesOrderGroupPaymentSummary? _groupSummary;
 
   @override
@@ -40,13 +43,15 @@ class _SalesOrderApprovalSheetState
       _loading = true;
       _error = null;
       _groupSummary = null;
+      // Per user request, start with NO selection
+      _selected.clear();
     });
 
     try {
       final api = ref.read(apiClientProvider);
       final r = repo.SalesOrderRepository(api);
 
-      // Use repo-optimized group summary (handles int/string order_id linkage)
+      // Use repo-optimized group summary
       final group = await r.fetchGroupPaymentSummary(orders: widget.orders);
 
       if (!mounted) return;
@@ -63,8 +68,29 @@ class _SalesOrderApprovalSheetState
     }
   }
 
-  Future<void> _onApproveAll() async {
+  void _toggle(int orderId) {
+    setState(() {
+      if (_selected.contains(orderId)) {
+        _selected.remove(orderId);
+      } else {
+        _selected.add(orderId);
+      }
+    });
+  }
+
+  void _selectAll(bool? v) {
+    setState(() {
+      if (v == true) {
+        _selected.addAll(widget.orders.map((e) => e.orderId));
+      } else {
+        _selected.clear();
+      }
+    });
+  }
+
+  Future<void> _onApproveSelected() async {
     if (_approving || _loading) return;
+    if (_selected.isEmpty) return;
 
     setState(() {
       _approving = true;
@@ -78,11 +104,21 @@ class _SalesOrderApprovalSheetState
           .read(authRepositoryProvider)
           .getCurrentAppUserId();
 
+      // Filter to only selected
+      final targets = widget.orders
+          .where((o) => _selected.contains(o.orderId))
+          .toList();
+
+      if (targets.isEmpty) {
+        setState(() => _approving = false);
+        return;
+      }
+
       // Approve per PO group when possible
       final byPo = <String, List<repo.SalesOrderHeader>>{};
       final singles = <repo.SalesOrderHeader>[];
 
-      for (final o in widget.orders) {
+      for (final o in targets) {
         final po = (o.poNo ?? "").trim();
         if (po.isEmpty) {
           singles.add(o);
@@ -91,36 +127,77 @@ class _SalesOrderApprovalSheetState
         }
       }
 
+      final errors = <String>[];
+
+      // 1. Grouped by PO
       for (final entry in byPo.entries) {
         final po = entry.key;
         final list = entry.value;
 
-        if (list.length > 1) {
-          await r.approveSalesOrdersByPoNo(
-            poNo: po,
-            approvedByUserId: approverId,
-            writeTimelineFields: true,
-          );
-        } else {
-          final only = list.first;
-          await r.approveSalesOrder(
-            orderId: only.orderId,
-            approvedByUserId: approverId,
-            writeTimelineFields: true,
-          );
+        try {
+          if (list.length > 1) {
+            // If ALL orders in this PO group are selected, use bulk by PO
+            // BUT: wait, if we only selected SOME of the PO's orders, we can't use `approveSalesOrdersByPoNo`
+            // because that approves ALL for that PO.
+            // Logic check: fetchSalesOrdersByPoNo fetches ALL.
+            // Safest approach: just loop individual updates unless we verify we have ALL.
+            // To be safe and simple: just loop individual updates for now OR check count.
+            // Given the requirement "can only select a order that be approve", let's just do individual loop
+            // to avoid accidentally approving unselected orders sharing the same PO.
+            for (final o in list) {
+              await r.approveSalesOrder(
+                orderId: o.orderId,
+                approvedByUserId: approverId,
+                writeTimelineFields: true,
+              );
+            }
+          } else {
+            final only = list.first;
+            await r.approveSalesOrder(
+              orderId: only.orderId,
+              approvedByUserId: approverId,
+              writeTimelineFields: true,
+            );
+          }
+        } catch (e) {
+          errors.add("PO $po: $e");
         }
       }
 
+      // 2. Singles
       for (final o in singles) {
-        await r.approveSalesOrder(
-          orderId: o.orderId,
-          approvedByUserId: approverId,
-          writeTimelineFields: true,
-        );
+        try {
+          await r.approveSalesOrder(
+            orderId: o.orderId,
+            approvedByUserId: approverId,
+            writeTimelineFields: true,
+          );
+        } catch (e) {
+          errors.add("Order ${o.orderNo}: $e");
+        }
       }
 
       if (!mounted) return;
-      Navigator.of(context).pop(true);
+
+      if (errors.isNotEmpty) {
+        // Partial or full failure
+        setState(() {
+          _error = "Errors occurred:\n${errors.join('\n')}";
+          _approving = false;
+        });
+
+        // Also show snackbar if user requested
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              "Failed to approve ${errors.length} order(s). Check details.",
+            ),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      } else {
+        Navigator.of(context).pop(true);
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -137,6 +214,9 @@ class _SalesOrderApprovalSheetState
 
     final group = _groupSummary;
 
+    // Calc totals only for VISIBLE orders (all) or SELECTED?
+    // Usually header stats show what's available.
+    // Let's keep stats for ALL orders passed to the sheet, so user knows what they are dealing with.
     final ordersNetTotal = widget.orders.fold<double>(
       0.0,
       (s, o) => s + o.netAmount,
@@ -145,6 +225,11 @@ class _SalesOrderApprovalSheetState
       0.0,
       (s, o) => s + o.totalAmount,
     );
+
+    // Calc selected count
+    final selCount = _selected.length;
+    final allCount = widget.orders.length;
+    final isAllSelected = selCount == allCount && allCount > 0;
 
     // Correct workflow: approve -> For Consolidation
     final nextStatus = repo.SalesOrderRepository.soStatusAfterApprove;
@@ -386,14 +471,23 @@ class _SalesOrderApprovalSheetState
                       const SizedBox(height: 14),
 
                       // Orders list
-                      _SectionHeader(
-                        title: "Orders Included",
-                        subtitle: "${widget.orders.length} order(s) ready",
-                        trailing: _Pill(
-                          text: "FOR APPROVAL",
-                          bg: cs.secondary.withOpacity(0.10),
-                          fg: cs.secondary,
-                        ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _SectionHeader(
+                              title: "Orders Included",
+                              subtitle:
+                                  "${widget.orders.length} order(s) available",
+                            ),
+                          ),
+                          // Select All toggle
+                          TextButton(
+                            onPressed: () => _selectAll(!isAllSelected),
+                            child: Text(
+                              isAllSelected ? "Deselect All" : "Select All",
+                            ),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 10),
                       _Card(
@@ -409,10 +503,14 @@ class _SalesOrderApprovalSheetState
                                   ? o.netAmount
                                   : o.totalAmount;
 
+                              final isSel = _selected.contains(o.orderId);
+
                               return _OrderRow(
                                 soNo: soNo,
                                 poNo: po,
                                 amount: _fmtMoney(amount),
+                                selected: isSel,
+                                onSelect: (v) => _toggle(o.orderId),
                               );
                             }),
                           ],
@@ -436,9 +534,9 @@ class _SalesOrderApprovalSheetState
                       ),
                     ),
                     child: FilledButton(
-                      onPressed: (_approving || _loading)
+                      onPressed: (_approving || _loading || selCount == 0)
                           ? null
-                          : _onApproveAll,
+                          : _onApproveSelected,
                       style: FilledButton.styleFrom(
                         minimumSize: const Size.fromHeight(52),
                         shape: RoundedRectangleBorder(
@@ -459,7 +557,9 @@ class _SalesOrderApprovalSheetState
                                 const Icon(Icons.verified_rounded, size: 18),
                                 const SizedBox(width: 8),
                                 Text(
-                                  "Approve All (${widget.orders.length})",
+                                  selCount == 0
+                                      ? "Select Orders to Approve"
+                                      : "Approve Selected ($selCount)",
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w900,
                                   ),
@@ -515,12 +615,12 @@ class _Card extends StatelessWidget {
 class _SectionHeader extends StatelessWidget {
   final String title;
   final String subtitle;
-  final Widget? trailing;
+  // final Widget? trailing; // Removed unused parameter
 
   const _SectionHeader({
     required this.title,
     required this.subtitle,
-    this.trailing,
+    // this.trailing,
   });
 
   @override
@@ -553,7 +653,7 @@ class _SectionHeader extends StatelessWidget {
             ],
           ),
         ),
-        if (trailing != null) trailing!,
+        // if (trailing != null) trailing!,
       ],
     );
   }
@@ -591,11 +691,15 @@ class _OrderRow extends StatelessWidget {
   final String soNo;
   final String poNo;
   final String amount;
+  final bool selected;
+  final ValueChanged<bool?>? onSelect;
 
   const _OrderRow({
     required this.soNo,
     required this.poNo,
     required this.amount,
+    required this.selected,
+    required this.onSelect,
   });
 
   @override
@@ -603,48 +707,64 @@ class _OrderRow extends StatelessWidget {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  soNo,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 0.2,
-                    fontFamily: "RobotoMono",
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+    return InkWell(
+      onTap: () => onSelect?.call(!selected),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 24,
+              height: 24,
+              child: Checkbox(
+                value: selected,
+                onChanged: onSelect,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(4),
                 ),
-                if (poNo.trim().isNotEmpty) ...[
-                  const SizedBox(height: 3),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Text(
-                    "PO: $poNo",
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: cs.onSurfaceVariant,
-                      fontWeight: FontWeight.w700,
+                    soNo,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.2,
+                      fontFamily: "RobotoMono",
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
+                  if (poNo.trim().isNotEmpty) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      "PO: $poNo",
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: cs.onSurfaceVariant,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            amount,
-            style: theme.textTheme.bodySmall?.copyWith(
-              fontWeight: FontWeight.w900,
-              color: cs.onSurface,
+            const SizedBox(width: 10),
+            Text(
+              amount,
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontWeight: FontWeight.w900,
+                color: cs.onSurface,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

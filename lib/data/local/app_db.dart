@@ -9,7 +9,8 @@ class AppDb {
   // ✅ v35: Fix v_sales_report_itemized join (details join must not require order_id match)
   // ✅ v36: Add disbursement itemized view (view_disbursement_itemized) for Disbursement module
   // ✅ v37: Inventory cache tables + SQLite inventory views (v_product_movements + v_running_inventory)
-  static const _dbVersion = 37;
+  // ✅ v38: Fix view_disbursement_itemized to join divisions table directly (avoid dependency on compat view `division`)
+  static const _dbVersion = 38;
 
   static Database? _instance;
 
@@ -955,6 +956,13 @@ class AppDb {
       // Helpful indices
       await _createInventoryIndices(db);
     }
+
+    // ✅ v38: Ensure view_disbursement_itemized uses divisions table (not compat view `division`)
+    if (oldV < 38) {
+      await _createAPTables(db);
+      await db.execute('DROP VIEW IF EXISTS view_disbursement_itemized;');
+      await _createAPViews(db);
+    }
   }
 
   /* -------------------------------------------------------------------------- */
@@ -1334,7 +1342,7 @@ class AppDb {
       ORDER BY payee_name, gl_code, account_title;
     ''');
 
-    // ✅ NEW: view_disbursement_itemized (SQLite-compatible version of your MySQL view)
+    // ✅ view_disbursement_itemized (fixed: join `divisions` directly, not `division` compat view)
     await db.execute('DROP VIEW IF EXISTS view_disbursement_itemized;');
     await db.execute('''
       CREATE VIEW view_disbursement_itemized AS
@@ -1397,7 +1405,7 @@ class AppDb {
         ON ua.user_id = d.approver_id
       LEFT JOIN user up
         ON up.user_id = d.posted_by
-      LEFT JOIN division dv
+      LEFT JOIN divisions dv
         ON dv.division_id = p.division_id
       LEFT JOIN chart_of_accounts coa
         ON coa.coa_id = p.coa_id;
@@ -2127,7 +2135,6 @@ ORDER BY fb.brand_name, fb.category_name, fb.product_name
     FROM assets_and_equipment a;
   ''');
   }
-}
 
   /* -------------------------------------------------------------------------- */
   /*                    Inventory cache tables + SQLite views                    */
@@ -2299,11 +2306,7 @@ ORDER BY fb.brand_name, fb.category_name, fb.product_name
     await db.execute('DROP VIEW IF EXISTS v_product_movements;');
     await db.execute('DROP VIEW IF EXISTS v_running_inventory;');
 
-    // SQLite-friendly rewrite of your MySQL v_product_movements
-    // Notes:
-    // - Uses max(x,1) via max()
-    // - Replaces regexp_like with a GLOB digit-only test
-    // - Uses COALESCE(c.store_name, c.customer_name) for Store
+    // (unchanged from your v37 code)
     await db.execute('''
       CREATE VIEW v_product_movements AS
       WITH
@@ -2580,7 +2583,6 @@ ORDER BY fb.brand_name, fb.category_name, fb.product_name
       LEFT JOIN suppliers s ON s.id = ps.supplier_id;
     ''');
 
-    // SQLite-friendly rewrite of your MySQL v_running_inventory
     await db.execute('''
       CREATE VIEW v_running_inventory AS
       WITH
@@ -2647,6 +2649,4 @@ ORDER BY fb.brand_name, fb.category_name, fb.product_name
       ORDER BY b.branch_name, p.product_name;
     ''');
   }
-
 }
-
